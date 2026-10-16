@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { GameStatus, PlayerStats, SupplyItem } from '../types/game';
 import { buildPostApocalypticTown, WorldBuildResult } from './world';
+import { getWorldSurfaceHeight } from './terrain';
 import { PlayerController } from './player';
 import { ZombieSystem } from './zombies';
 import { SupplySystem } from './supplies';
@@ -373,11 +374,16 @@ export class GameEngine {
       return;
     }
 
-    // Subtle wind sway on foliage & trees
+    // Subtle wind sway on foliage & trees, and radio tower beacon pulsing
     const windSpeed = totalTime * 2.2;
     this.worldData.windObjects.forEach((obj, idx) => {
-      const sway = Math.sin(windSpeed + idx * 0.8) * 0.018;
-      obj.rotation.z = sway;
+      if ((obj as any).isPointLight) {
+        // Red aviation warning beacon pulse on transmission tower
+        (obj as THREE.PointLight).intensity = 1.0 + Math.sin(totalTime * 4.5) * 1.5;
+      } else {
+        const sway = Math.sin(windSpeed + idx * 0.8) * 0.018;
+        obj.rotation.z = sway;
+      }
     });
 
     if (this.status === 'title') {
@@ -397,14 +403,14 @@ export class GameEngine {
       // 1. Advance Day/Night Cycle
       this.updateDayNightCycle(dt);
 
-      // 2. Update Player Physics & Controls
-      this.player.update(dt, this.worldData.colliders);
+      // 2. Update Player Physics, Controls & Terrain Grounding
+      this.player.update(dt, this.worldData.colliders, getWorldSurfaceHeight);
 
       // 3. Update 3D Spatial Audio Listener with camera position & orientation
       this.camera.getWorldDirection(_listenerFwd);
       sound.updateListener(this.camera.position, _listenerFwd, this.camera.up);
 
-      // 4. Update Zombies
+      // 4. Update Zombies with Sensory AI, Line of Sight, and Dynamic Terrain Grounding
       this.zombies.update(
         dt,
         this.player.position,
@@ -422,7 +428,8 @@ export class GameEngine {
             this.player.unlockPointer();
             this.callbacks.onStatusChange('gameover');
           }
-        }
+        },
+        getWorldSurfaceHeight
       );
 
       if (this.player.stats.health <= 0 && this.status === 'playing') {

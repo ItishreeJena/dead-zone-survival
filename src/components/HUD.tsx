@@ -13,6 +13,7 @@ import {
   Sun,
   Moon,
   Disc,
+  Compass,
 } from 'lucide-react';
 
 interface HUDProps {
@@ -84,6 +85,14 @@ export const HUD: React.FC<HUDProps> = ({
             <span className="text-neutral-400">SUPPLIES:</span>
             <span className="text-amber-400 font-bold tabular-nums text-sm">{stats.itemsFound}</span>
           </div>
+
+          {stats.currentLocation && (
+            <div className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 bg-neutral-950/85 border border-neutral-800 text-xs text-neutral-300">
+              <Compass className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-neutral-500 font-semibold">DISTRICT:</span>
+              <span className="font-bold text-amber-200 tracking-wider">{stats.currentLocation}</span>
+            </div>
+          )}
         </div>
 
         {/* Right: Sound & Pause Controls */}

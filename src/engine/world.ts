@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BoxCollider, ItemType } from '../types/game';
+import { getTerrainHeight, getWorldSurfaceHeight, createOpenWorldTerrainMesh } from './terrain';
 import {
   createAsphaltTexture,
   createBrickWallTexture,
@@ -27,9 +28,9 @@ export function buildPostApocalypticTown(): WorldBuildResult {
   const streetlights: THREE.PointLight[] = [];
   const windObjects: THREE.Object3D[] = [];
 
-  // Reusable Materials
+  // 1. Reusable PBR Materials
   const asphaltTex = createAsphaltTexture();
-  asphaltTex.repeat.set(2, 22);
+  asphaltTex.repeat.set(2, 40);
   const roadMat = new THREE.MeshStandardMaterial({
     map: asphaltTex,
     roughness: 0.85,
@@ -80,7 +81,7 @@ export function buildPostApocalypticTown(): WorldBuildResult {
   });
 
   const pineNeedleMat = new THREE.MeshStandardMaterial({
-    color: 0x223624,
+    color: 0x1f3322,
     roughness: 0.9,
     flatShading: true,
   });
@@ -92,7 +93,7 @@ export function buildPostApocalypticTown(): WorldBuildResult {
   });
 
   const rockMat = new THREE.MeshStandardMaterial({
-    color: 0x4a4d48,
+    color: 0x484b47,
     roughness: 0.95,
     flatShading: true,
   });
@@ -106,88 +107,160 @@ export function buildPostApocalypticTown(): WorldBuildResult {
     opacity: 0.7,
   });
 
-  // 1. Varied Natural Terrain with subtle elevation banks
-  const terrainGeo = new THREE.PlaneGeometry(240, 240, 48, 48);
-  const posAttr = terrainGeo.attributes.position;
-  for (let i = 0; i < posAttr.count; i++) {
-    const x = posAttr.getX(i);
-    const y = posAttr.getY(i); // In 2D plane geometry, Y is the second horizontal axis
+  const tarpMat = new THREE.MeshStandardMaterial({
+    color: 0x3b6648,
+    roughness: 0.8,
+  });
 
-    // Keep roads and main downtown crossroad flat
-    const distToCenter = Math.sqrt(x * x + y * y);
-    const isRoadZone = (Math.abs(x) < 8.5 || Math.abs(y) < 8.5) && distToCenter < 55;
-
-    if (!isRoadZone && distToCenter > 18) {
-      // Gentle undulating hills and berms on outskirts
-      const hill =
-        Math.sin(x * 0.06) * Math.cos(y * 0.06) * 1.8 +
-        Math.sin(x * 0.02 + y * 0.03) * 2.2;
-      posAttr.setZ(i, Math.max(0, hill * Math.min(1, (distToCenter - 18) / 30)));
-    }
-  }
-  terrainGeo.computeVertexNormals();
-
+  // 2. Vast Continuous 360m x 360m Open-World Terrain Mesh
   const groundMat = new THREE.MeshStandardMaterial({
-    color: 0x252a22, // Dark overgrown desolate soil
+    color: 0x242820,
     roughness: 0.95,
     metalness: 0.05,
   });
-  const terrain = new THREE.Mesh(terrainGeo, groundMat);
-  terrain.rotation.x = -Math.PI / 2;
-  terrain.receiveShadow = true;
-  sceneGroup.add(terrain);
+  const terrainMesh = createOpenWorldTerrainMesh(groundMat);
+  sceneGroup.add(terrainMesh);
 
-  // 2. Roads & Sidewalks
-  const mainRoadGeo = new THREE.PlaneGeometry(12, 110);
-  const mainRoad = new THREE.Mesh(mainRoadGeo, roadMat);
-  mainRoad.rotation.x = -Math.PI / 2;
-  mainRoad.position.set(0, 0.03, 0);
-  mainRoad.receiveShadow = true;
-  sceneGroup.add(mainRoad);
+  // 3. Continuous Paved Road Network (Connecting All 6 Regions)
+  function createPavedRoadSegment(x1: number, z1: number, x2: number, z2: number, width: number) {
+    const dx = x2 - x1;
+    const dz = z2 - z1;
+    const length = Math.sqrt(dx * dx + dz * dz);
+    const angle = Math.atan2(dx, dz);
+    const midX = (x1 + x2) / 2;
+    const midZ = (z1 + z2) / 2;
+    const groundY = getTerrainHeight(midX, midZ);
 
-  const crossRoadGeo = new THREE.PlaneGeometry(110, 10);
-  const crossRoad = new THREE.Mesh(crossRoadGeo, roadMat);
-  crossRoad.rotation.x = -Math.PI / 2;
-  crossRoad.position.set(0, 0.04, 0);
-  crossRoad.receiveShadow = true;
-  sceneGroup.add(crossRoad);
+    const roadGeo = new THREE.PlaneGeometry(width, length);
+    const road = new THREE.Mesh(roadGeo, roadMat);
+    road.rotation.x = -Math.PI / 2;
+    road.rotation.z = -angle;
+    road.position.set(midX, groundY + 0.03, midZ);
+    road.receiveShadow = true;
+    sceneGroup.add(road);
+  }
 
+  // A. Main Downtown North-South Avenue (11m wide, from -125 to 110)
+  createPavedRoadSegment(0, -120, 0, 110, 11);
+  // B. Main East-West Highway (10m wide, from -135 to 140)
+  createPavedRoadSegment(-135, 0, 140, 0, 10);
+  // C. South Suburbia Access Boulevard
+  createPavedRoadSegment(-35, 70, 35, 70, 9);
+  // D. North Field Hospital Loop
+  createPavedRoadSegment(-30, -90, 30, -90, 9);
+  // E. East Warehouse Industrial Spur
+  createPavedRoadSegment(65, 0, 125, 70, 9);
+
+  // Sidewalks in Downtown Core
   function createSidewalk(x: number, z: number, w: number, l: number) {
+    const gy = getTerrainHeight(x, z);
     const swGeo = new THREE.BoxGeometry(w, 0.16, l);
     const swMesh = new THREE.Mesh(swGeo, concreteMat);
-    swMesh.position.set(x, 0.08, z);
+    swMesh.position.set(x, gy + 0.08, z);
     swMesh.receiveShadow = true;
     sceneGroup.add(swMesh);
   }
 
-  createSidewalk(-10, -32, 6, 50);
-  createSidewalk(10, -32, 6, 50);
-  createSidewalk(-10, 32, 6, 50);
-  createSidewalk(10, 32, 6, 50);
-  createSidewalk(-32, -8.5, 36, 5);
-  createSidewalk(32, -8.5, 36, 5);
-  createSidewalk(-32, 8.5, 36, 5);
-  createSidewalk(32, 8.5, 36, 5);
+  createSidewalk(-9, -24, 5, 42);
+  createSidewalk(9, -24, 5, 42);
+  createSidewalk(-9, 24, 5, 42);
+  createSidewalk(9, 24, 5, 42);
+  createSidewalk(-24, -8, 26, 4.5);
+  createSidewalk(24, -8, 26, 4.5);
+  createSidewalk(-24, 8, 26, 4.5);
+  createSidewalk(24, 8, 26, 4.5);
 
-  // 3. Multi-part Ruined Buildings with Distinct Architectures
-  // Building A: Two-Story Ruined Town Hall / Armory (North-West)
-  function createArmoryBuilding(cx: number, cz: number) {
+  // -------------------------------------------------------------
+  // SECTOR 1: DOWNTOWN CORE (Crossroads, Pharmacy, Police Station)
+  // -------------------------------------------------------------
+  // A. Ruined Pharmacy & Grocery (North-East Downtown: X: 22, Z: -24)
+  function createPharmacyBuilding(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
     const bGroup = new THREE.Group();
-    bGroup.position.set(cx, 0, cz);
+    bGroup.position.set(cx, gy, cz);
 
-    const w = 18;
-    const h = 7.5;
+    const w = 15;
+    const h = 5.6;
+    const d = 15;
+    const wallThick = 0.5;
+
+    // Foundation & Floor
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), concreteMat);
+    floor.position.set(0, 0.15, 0);
+    floor.receiveShadow = true;
+    bGroup.add(floor);
+
+    // Front wall with open double doorway
+    const doorW = 2.8;
+    const segW = (w - doorW) / 2;
+    const leftW = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), brickMat);
+    leftW.position.set(-w / 2 + segW / 2, h / 2, d / 2);
+    leftW.castShadow = true;
+    bGroup.add(leftW);
+
+    const rightW = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), brickMat);
+    rightW.position.set(w / 2 - segW / 2, h / 2, d / 2);
+    rightW.castShadow = true;
+    bGroup.add(rightW);
+
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(doorW, h - 3.0, wallThick), brickMat);
+    lintel.position.set(0, 3.0 + (h - 3.0) / 2, d / 2);
+    bGroup.add(lintel);
+
+    // Back & Side walls
+    const back = new THREE.Mesh(new THREE.BoxGeometry(w, h, wallThick), brickMat);
+    back.position.set(0, h / 2, -d / 2);
+    back.castShadow = true;
+    bGroup.add(back);
+
+    const left = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), brickMat);
+    left.position.set(-w / 2, h / 2, 0);
+    left.castShadow = true;
+    bGroup.add(left);
+
+    const right = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), brickMat);
+    right.position.set(w / 2, h / 2, 0);
+    right.castShadow = true;
+    bGroup.add(right);
+
+    // Interior Scavenge Counter & Shelves
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(4.5, 1.1, 0.8), woodMat);
+    counter.position.set(0, 0.55, -1);
+    bGroup.add(counter);
+
+    // Ruined partial roof
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w * 0.75, 0.25, d * 0.75), concreteMat);
+    roof.position.set(-w * 0.1, h, -d * 0.1);
+    bGroup.add(roof);
+
+    sceneGroup.add(bGroup);
+
+    colliders.push({ minX: cx - w / 2, maxX: cx - doorW / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
+    colliders.push({ minX: cx + doorW / 2, maxX: cx + w / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
+    colliders.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2 - 0.3, maxZ: cz - d / 2 + 0.3 });
+    colliders.push({ minX: cx - w / 2 - 0.3, maxX: cx - w / 2 + 0.3, minZ: cz - d / 2, maxZ: cz + d / 2 });
+    colliders.push({ minX: cx + w / 2 - 0.3, maxX: cx + w / 2 + 0.3, minZ: cz - d / 2, maxZ: cz + d / 2 });
+    colliders.push({ minX: cx - 2.3, maxX: cx + 2.3, minZ: cz - 1.4, maxZ: cz - 0.6 });
+  }
+
+  createPharmacyBuilding(22, -24);
+
+  // B. Police Armory Station (North-West Downtown: X: -22, Z: -24)
+  function createPoliceArmory(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const bGroup = new THREE.Group();
+    bGroup.position.set(cx, gy, cz);
+
+    const w = 16;
+    const h = 6.8;
     const d = 16;
     const wallThick = 0.5;
 
-    // Foundation
-    const fMesh = new THREE.Mesh(new THREE.BoxGeometry(w + 0.6, 0.4, d + 0.6), concreteMat);
-    fMesh.position.set(0, 0.2, 0);
-    fMesh.receiveShadow = true;
-    bGroup.add(fMesh);
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), concreteMat);
+    floor.position.set(0, 0.15, 0);
+    bGroup.add(floor);
 
-    // Front Wall with double doorway
-    const doorW = 3.2;
+    const doorW = 3.0;
     const segW = (w - doorW) / 2;
     const leftW = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), brickMat);
     leftW.position.set(-w / 2 + segW / 2, h / 2, d / 2);
@@ -203,158 +276,34 @@ export function buildPostApocalypticTown(): WorldBuildResult {
     lintel.position.set(0, 3.2 + (h - 3.2) / 2, d / 2);
     bGroup.add(lintel);
 
-    // Front Classical Pillars
-    for (let i = -1; i <= 1; i += 2) {
-      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, h, 10), concreteMat);
-      col.position.set(i * 3.5, h / 2, d / 2 + 1.2);
-      col.castShadow = true;
-      bGroup.add(col);
-      colliders.push({ minX: cx + i * 3.5 - 0.4, maxX: cx + i * 3.5 + 0.4, minZ: cz + d / 2 + 0.8, maxZ: cz + d / 2 + 1.6 });
-    }
-
-    // Back & Side Walls
-    const backWall = new THREE.Mesh(new THREE.BoxGeometry(w, h, wallThick), brickMat);
-    backWall.position.set(0, h / 2, -d / 2);
-    backWall.castShadow = true;
-    bGroup.add(backWall);
-
-    const sideL = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), brickMat);
-    sideL.position.set(-w / 2, h / 2, 0);
-    sideL.castShadow = true;
-    bGroup.add(sideL);
-
-    const sideR = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), brickMat);
-    sideR.position.set(w / 2, h / 2, 0);
-    sideR.castShadow = true;
-    bGroup.add(sideR);
-
-    // Second floor mezzanine (half collapsed)
-    const floor2 = new THREE.Mesh(new THREE.BoxGeometry(w * 0.7, 0.25, d * 0.5), woodMat);
-    floor2.position.set(-w * 0.15, 3.6, -d * 0.2);
-    bGroup.add(floor2);
-
-    // Partial ruined roof
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(w * 0.8, 0.3, d * 0.6), concreteMat);
-    roof.position.set(0, h, -d * 0.1);
-    bGroup.add(roof);
-
-    sceneGroup.add(bGroup);
-
-    // Colliders
-    colliders.push({ minX: cx - w / 2, maxX: cx - doorW / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
-    colliders.push({ minX: cx + doorW / 2, maxX: cx + w / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
-    colliders.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2 - 0.3, maxZ: cz - d / 2 + 0.3 });
-    colliders.push({ minX: cx - w / 2 - 0.3, maxX: cx - w / 2 + 0.3, minZ: cz - d / 2, maxZ: cz + d / 2 });
-    colliders.push({ minX: cx + w / 2 - 0.3, maxX: cx + w / 2 + 0.3, minZ: cz - d / 2, maxZ: cz + d / 2 });
-  }
-
-  createArmoryBuilding(-24, -28);
-
-  // Building B: Gas Station / Workshop with Canopy (South-East)
-  function createGasStation(cx: number, cz: number) {
-    const gsGroup = new THREE.Group();
-    gsGroup.position.set(cx, 0, cz);
-
-    // Store building
-    const storeW = 12;
-    const storeH = 4.8;
-    const storeD = 10;
-    const wallMesh = new THREE.Mesh(new THREE.BoxGeometry(storeW, storeH, storeD), brickMat);
-    wallMesh.position.set(0, storeH / 2, -6);
-    wallMesh.castShadow = true;
-    gsGroup.add(wallMesh);
-    colliders.push({ minX: cx - storeW / 2, maxX: cx + storeW / 2, minZ: cz - 6 - storeD / 2, maxZ: cz - 6 + storeD / 2 });
-
-    // Forecourt Canopy with rusted metal corrugated roof
-    const canopyW = 14;
-    const canopyD = 9;
-    const canopyH = 4.6;
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(canopyW, 0.4, canopyD), rustMat);
-    roof.position.set(0, canopyH, 4);
-    roof.castShadow = true;
-    gsGroup.add(roof);
-
-    // 2 Canopy Support Posts
-    for (const px of [-4.5, 4.5]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, canopyH, 8), darkMetalMat);
-      post.position.set(px, canopyH / 2, 4);
-      post.castShadow = true;
-      gsGroup.add(post);
-      colliders.push({ minX: cx + px - 0.3, maxX: cx + px + 0.3, minZ: cz + 4 - 0.3, maxZ: cz + 4 + 0.3 });
-    }
-
-    // 2 Gas Pump Islands
-    for (const pz of [2.2, 5.8]) {
-      const island = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.2, 0.8), concreteMat);
-      island.position.set(0, 0.1, pz);
-      gsGroup.add(island);
-
-      const pump = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 0.5), rustMat);
-      pump.position.set(0, 0.9, pz);
-      pump.castShadow = true;
-      gsGroup.add(pump);
-      colliders.push({ minX: cx - 0.8, maxX: cx + 0.8, minZ: cz + pz - 0.35, maxZ: cz + pz + 0.35 });
-    }
-
-    sceneGroup.add(gsGroup);
-  }
-
-  createGasStation(24, 26);
-
-  // Building C: Abandoned Pharmacy & Market (North-East)
-  function createMarketBuilding(cx: number, cz: number) {
-    const mGroup = new THREE.Group();
-    mGroup.position.set(cx, 0, cz);
-
-    const w = 15;
-    const h = 5.5;
-    const d = 15;
-    const wallThick = 0.5;
-
-    // Foundation
-    const f = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.3, d + 0.4), concreteMat);
-    f.position.set(0, 0.15, 0);
-    mGroup.add(f);
-
-    // Front Wall with wide display window openings
-    const doorW = 2.4;
-    const wallLeft = new THREE.Mesh(new THREE.BoxGeometry(5.8, h, wallThick), brickMat);
-    wallLeft.position.set(-w / 2 + 2.9, h / 2, d / 2);
-    wallLeft.castShadow = true;
-    mGroup.add(wallLeft);
-
-    const wallRight = new THREE.Mesh(new THREE.BoxGeometry(5.8, h, wallThick), brickMat);
-    wallRight.position.set(w / 2 - 2.9, h / 2, d / 2);
-    wallRight.castShadow = true;
-    mGroup.add(wallRight);
-
-    const lintel = new THREE.Mesh(new THREE.BoxGeometry(doorW, h - 3.0, wallThick), brickMat);
-    lintel.position.set(0, 3.0 + (h - 3.0) / 2, d / 2);
-    mGroup.add(lintel);
-
-    // Back & Sides
     const back = new THREE.Mesh(new THREE.BoxGeometry(w, h, wallThick), brickMat);
     back.position.set(0, h / 2, -d / 2);
     back.castShadow = true;
-    mGroup.add(back);
+    bGroup.add(back);
 
     const left = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), brickMat);
     left.position.set(-w / 2, h / 2, 0);
-    left.castShadow = true;
-    mGroup.add(left);
+    bGroup.add(left);
 
     const right = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), brickMat);
     right.position.set(w / 2, h / 2, 0);
-    right.castShadow = true;
-    mGroup.add(right);
+    bGroup.add(right);
 
-    // Collapsed ceiling
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(w * 0.75, 0.25, d * 0.75), concreteMat);
-    roof.position.set(-w * 0.1, h, -d * 0.1);
-    roof.rotation.z = 0.04;
-    mGroup.add(roof);
+    // Front Pillars
+    for (const px of [-3.5, 3.5]) {
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, h, 10), concreteMat);
+      col.position.set(px, h / 2, d / 2 + 1.2);
+      col.castShadow = true;
+      bGroup.add(col);
+      colliders.push({ minX: cx + px - 0.4, maxX: cx + px + 0.4, minZ: cz + d / 2 + 0.8, maxZ: cz + d / 2 + 1.6 });
+    }
 
-    sceneGroup.add(mGroup);
+    // Armory Gun Locker Rack inside
+    const locker = new THREE.Mesh(new THREE.BoxGeometry(3.5, 2.2, 0.6), darkMetalMat);
+    locker.position.set(-w / 2 + 2.2, 1.1, -d / 2 + 1.2);
+    bGroup.add(locker);
+
+    sceneGroup.add(bGroup);
 
     colliders.push({ minX: cx - w / 2, maxX: cx - doorW / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
     colliders.push({ minX: cx + doorW / 2, maxX: cx + w / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
@@ -363,73 +312,701 @@ export function buildPostApocalypticTown(): WorldBuildResult {
     colliders.push({ minX: cx + w / 2 - 0.3, maxX: cx + w / 2 + 0.3, minZ: cz - d / 2, maxZ: cz + d / 2 });
   }
 
-  createMarketBuilding(24, -28);
+  createPoliceArmory(-22, -24);
 
-  // Building D: Ruined Residential House (South-West)
-  function createRuinedHouse(cx: number, cz: number) {
+  // -------------------------------------------------------------
+  // SECTOR 2: SUBURBAN RESIDENTIAL DISTRICT (South: Z: 50 to 95)
+  // -------------------------------------------------------------
+  function createSuburbanHouse(cx: number, cz: number, rotY: number = 0) {
+    const gy = getTerrainHeight(cx, cz);
     const hGroup = new THREE.Group();
-    hGroup.position.set(cx, 0, cz);
+    hGroup.position.set(cx, gy, cz);
+    hGroup.rotation.y = rotY;
 
-    const w = 14;
+    const w = 13;
     const h = 5.2;
-    const d = 14;
-    const wallThick = 0.45;
+    const d = 13;
+    const wallThick = 0.4;
 
-    // Front with porch
+    // Interior Floor
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.25, d), woodMat);
+    floor.position.set(0, 0.125, 0);
+    floor.receiveShadow = true;
+    hGroup.add(floor);
+
+    // Front Porch
     const porch = new THREE.Mesh(new THREE.BoxGeometry(w, 0.2, 3), woodMat);
     porch.position.set(0, 0.1, d / 2 + 1.5);
+    porch.receiveShadow = true;
     hGroup.add(porch);
 
-    const doorW = 2.0;
-    const leftW = new THREE.Mesh(new THREE.BoxGeometry((w - doorW) / 2, h, wallThick), woodMat);
-    leftW.position.set(-w / 4 - doorW / 4, h / 2, d / 2);
+    const doorW = 2.2;
+    const segW = (w - doorW) / 2;
+    const leftW = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), woodMat);
+    leftW.position.set(-w / 2 + segW / 2, h / 2, d / 2);
     leftW.castShadow = true;
     hGroup.add(leftW);
 
-    const rightW = new THREE.Mesh(new THREE.BoxGeometry((w - doorW) / 2, h, wallThick), woodMat);
-    rightW.position.set(w / 4 + doorW / 4, h / 2, d / 2);
+    const rightW = new THREE.Mesh(new THREE.BoxGeometry(segW, h, wallThick), woodMat);
+    rightW.position.set(w / 2 - segW / 2, h / 2, d / 2);
     rightW.castShadow = true;
     hGroup.add(rightW);
 
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(doorW, h - 2.8, wallThick), woodMat);
+    lintel.position.set(0, 2.8 + (h - 2.8) / 2, d / 2);
+    hGroup.add(lintel);
+
     const backW = new THREE.Mesh(new THREE.BoxGeometry(w, h, wallThick), woodMat);
     backW.position.set(0, h / 2, -d / 2);
+    backW.castShadow = true;
     hGroup.add(backW);
 
     const sideL = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), woodMat);
     sideL.position.set(-w / 2, h / 2, 0);
+    sideL.castShadow = true;
     hGroup.add(sideL);
 
     const sideR = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), woodMat);
     sideR.position.set(w / 2, h / 2, 0);
+    sideR.castShadow = true;
     hGroup.add(sideR);
 
     // Gabled Roof
-    const roofP1 = new THREE.Mesh(new THREE.BoxGeometry(w * 0.6, 0.2, d + 1), woodMat);
-    roofP1.position.set(-w * 0.25, h + 1.2, 0);
-    roofP1.rotation.z = 0.4;
-    hGroup.add(roofP1);
+    const roof1 = new THREE.Mesh(new THREE.BoxGeometry(w * 0.58, 0.22, d + 1), woodMat);
+    roof1.position.set(-w * 0.25, h + 1.2, 0);
+    roof1.rotation.z = 0.4;
+    hGroup.add(roof1);
+
+    const roof2 = new THREE.Mesh(new THREE.BoxGeometry(w * 0.58, 0.22, d + 1), woodMat);
+    roof2.position.set(w * 0.25, h + 1.2, 0);
+    roof2.rotation.z = -0.4;
+    hGroup.add(roof2);
+
+    // Enterable Living Room & Kitchen Furniture
+    const table = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.85, 1.4), woodMat);
+    table.position.set(-2.6, 0.425, 1.2);
+    hGroup.add(table);
+
+    const couch = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.8, 1.1), tarpMat);
+    couch.position.set(2.8, 0.4, 1.2);
+    hGroup.add(couch);
+
+    const kitchen = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.0, 0.85), concreteMat);
+    kitchen.position.set(-1.8, 0.5, -4.8);
+    hGroup.add(kitchen);
+
+    // Warm living room interior lamp
+    const roomLight = new THREE.PointLight(0xffdfb0, 0.75, 12, 2);
+    roomLight.position.set(0, h - 0.8, 0);
+    hGroup.add(roomLight);
 
     sceneGroup.add(hGroup);
 
-    colliders.push({ minX: cx - w / 2, maxX: cx - doorW / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
-    colliders.push({ minX: cx + doorW / 2, maxX: cx + w / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
+    // Colliders leaving front doorway open
+    colliders.push({ minX: cx - w / 2, maxX: cx - doorW / 2, minZ: cz + d / 2 - 0.25, maxZ: cz + d / 2 + 0.25 });
+    colliders.push({ minX: cx + doorW / 2, maxX: cx + w / 2, minZ: cz + d / 2 - 0.25, maxZ: cz + d / 2 + 0.25 });
+    colliders.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2 - 0.25, maxZ: cz - d / 2 + 0.25 });
+    colliders.push({ minX: cx - w / 2 - 0.25, maxX: cx - w / 2 + 0.25, minZ: cz - d / 2, maxZ: cz + d / 2 });
+    colliders.push({ minX: cx + w / 2 - 0.25, maxX: cx + w / 2 + 0.25, minZ: cz - d / 2, maxZ: cz + d / 2 });
+    colliders.push({ minX: cx - 4.0, maxX: cx - 1.2, minZ: cz + 0.3, maxZ: cz + 2.1 }); // table
+    colliders.push({ minX: cx + 1.3, maxX: cx + 4.2, minZ: cz + 0.4, maxZ: cz + 2.0 }); // couch
+  }
+
+  createSuburbanHouse(-24, 75);
+  createSuburbanHouse(24, 75);
+  createSuburbanHouse(-24, 30);
+  createSuburbanHouse(24, 30);
+
+  // -------------------------------------------------------------
+  // SECTOR 3: HIGHWAY GAS STATION & DINER (East Highway: X: 80 to 110)
+  // -------------------------------------------------------------
+  function createHighwayGasStation(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const gsGroup = new THREE.Group();
+    gsGroup.position.set(cx, gy, cz);
+
+    // 1. Enterable Convenience Store
+    const storeW = 14;
+    const storeH = 4.8;
+    const storeD = 11;
+    const wallThick = 0.4;
+    const storeCenterZ = -6;
+
+    // Floor
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(storeW, 0.25, storeD), concreteMat);
+    floor.position.set(0, 0.125, storeCenterZ);
+    floor.receiveShadow = true;
+    gsGroup.add(floor);
+
+    // Front Wall with open double doorway (doorW: 2.8)
+    const doorW = 2.8;
+    const segW = (storeW - doorW) / 2;
+    const frontZ = storeCenterZ + storeD / 2;
+
+    const frontL = new THREE.Mesh(new THREE.BoxGeometry(segW, storeH, wallThick), brickMat);
+    frontL.position.set(-storeW / 2 + segW / 2, storeH / 2, frontZ);
+    frontL.castShadow = true;
+    gsGroup.add(frontL);
+
+    const frontR = new THREE.Mesh(new THREE.BoxGeometry(segW, storeH, wallThick), brickMat);
+    frontR.position.set(storeW / 2 - segW / 2, storeH / 2, frontZ);
+    frontR.castShadow = true;
+    gsGroup.add(frontR);
+
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(doorW, storeH - 3.0, wallThick), brickMat);
+    lintel.position.set(0, 3.0 + (storeH - 3.0) / 2, frontZ);
+    gsGroup.add(lintel);
+
+    // Windows
+    const winL = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.8), glassMat);
+    winL.position.set(-3.5, 2.2, frontZ + 0.21);
+    gsGroup.add(winL);
+    const winR = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.8), glassMat);
+    winR.position.set(3.5, 2.2, frontZ + 0.21);
+    gsGroup.add(winR);
+
+    // Back & Side walls
+    const backZ = storeCenterZ - storeD / 2;
+    const back = new THREE.Mesh(new THREE.BoxGeometry(storeW, storeH, wallThick), brickMat);
+    back.position.set(0, storeH / 2, backZ);
+    back.castShadow = true;
+    gsGroup.add(back);
+
+    const left = new THREE.Mesh(new THREE.BoxGeometry(wallThick, storeH, storeD), brickMat);
+    left.position.set(-storeW / 2, storeH / 2, storeCenterZ);
+    left.castShadow = true;
+    gsGroup.add(left);
+
+    const right = new THREE.Mesh(new THREE.BoxGeometry(wallThick, storeH, storeD), brickMat);
+    right.position.set(storeW / 2, storeH / 2, storeCenterZ);
+    right.castShadow = true;
+    gsGroup.add(right);
+
+    // Flat roof
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(storeW + 0.8, 0.35, storeD + 0.8), darkMetalMat);
+    roof.position.set(0, storeH + 0.175, storeCenterZ);
+    gsGroup.add(roof);
+
+    // Interior Store Furniture
+    // Checkout Counter with Cash Register
+    const counter = new THREE.Mesh(new THREE.BoxGeometry(3.6, 1.1, 0.85), woodMat);
+    counter.position.set(-3.2, 0.55, -2.8);
+    gsGroup.add(counter);
+
+    const register = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.35, 0.5), darkMetalMat);
+    register.position.set(-2.5, 1.25, -2.8);
+    gsGroup.add(register);
+
+    // Center Grocery Snack Aisle Shelves
+    const shelf1 = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.9, 0.8), darkMetalMat);
+    shelf1.position.set(1.8, 0.95, -4.2);
+    gsGroup.add(shelf1);
+
+    const shelf2 = new THREE.Mesh(new THREE.BoxGeometry(4.2, 1.9, 0.8), darkMetalMat);
+    shelf2.position.set(1.8, 0.95, -7.5);
+    gsGroup.add(shelf2);
+
+    // Drink Coolers along back wall
+    const cooler = new THREE.Mesh(new THREE.BoxGeometry(7.0, 2.3, 0.8), darkMetalMat);
+    cooler.position.set(0, 1.15, backZ + 0.5);
+    gsGroup.add(cooler);
+
+    const coolerGlass = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 2.0), glassMat);
+    coolerGlass.position.set(0, 1.15, backZ + 0.91);
+    gsGroup.add(coolerGlass);
+
+    // Warm interior fluorescent ambient point light
+    const intLight = new THREE.PointLight(0xffecd0, 0.9, 14, 1.8);
+    intLight.position.set(0, storeH - 0.6, storeCenterZ);
+    gsGroup.add(intLight);
+
+    // Exterior Fuel Canopy & Pumps
+    const canopyW = 16;
+    const canopyD = 10;
+    const canopyH = 4.6;
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(canopyW, 0.35, canopyD), rustMat);
+    canopy.position.set(0, canopyH, 4);
+    canopy.castShadow = true;
+    gsGroup.add(canopy);
+
+    // Canopy Posts
+    for (const px of [-5.5, 5.5]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, canopyH, 8), darkMetalMat);
+      post.position.set(px, canopyH / 2, 4);
+      gsGroup.add(post);
+      colliders.push({ minX: cx + px - 0.35, maxX: cx + px + 0.35, minZ: cz + 4 - 0.35, maxZ: cz + 4 + 0.35 });
+    }
+
+    // Fuel Pumps
+    for (const pz of [1.8, 6.2]) {
+      const pump = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 0.5), rustMat);
+      pump.position.set(0, 0.8, pz);
+      gsGroup.add(pump);
+      colliders.push({ minX: cx - 0.75, maxX: cx + 0.75, minZ: cz + pz - 0.3, maxZ: cz + pz + 0.3 });
+    }
+
+    sceneGroup.add(gsGroup);
+
+    // Exterior Wall Colliders with open doorway at frontZ
+    colliders.push({ minX: cx - storeW / 2, maxX: cx - doorW / 2, minZ: cz + frontZ - 0.25, maxZ: cz + frontZ + 0.25 });
+    colliders.push({ minX: cx + doorW / 2, maxX: cx + storeW / 2, minZ: cz + frontZ - 0.25, maxZ: cz + frontZ + 0.25 });
+    colliders.push({ minX: cx - storeW / 2, maxX: cx + storeW / 2, minZ: cz + backZ - 0.25, maxZ: cz + backZ + 0.25 });
+    colliders.push({ minX: cx - storeW / 2 - 0.25, maxX: cx - storeW / 2 + 0.25, minZ: cz + backZ, maxZ: cz + frontZ });
+    colliders.push({ minX: cx + storeW / 2 - 0.25, maxX: cx + storeW / 2 + 0.25, minZ: cz + backZ, maxZ: cz + frontZ });
+
+    // Interior Counter & Shelves Colliders
+    colliders.push({ minX: cx - 5.0, maxX: cx - 1.4, minZ: cz - 3.3, maxZ: cz - 2.3 });
+    colliders.push({ minX: cx - 0.4, maxX: cx + 4.0, minZ: cz - 4.7, maxZ: cz - 3.7 });
+    colliders.push({ minX: cx - 0.4, maxX: cx + 4.0, minZ: cz - 8.0, maxZ: cz - 7.0 });
+  }
+
+  createHighwayGasStation(85, 12);
+
+  // -------------------------------------------------------------
+  // SECTOR 4: QUARANTINE FIELD HOSPITAL (North: Z: -75 to -115)
+  // -------------------------------------------------------------
+  function createFieldHospital(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const fhGroup = new THREE.Group();
+    fhGroup.position.set(cx, gy, cz);
+
+    const clinicW = 16;
+    const clinicH = 5.2;
+    const clinicD = 13;
+    const wallThick = 0.45;
+
+    // Floor
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(clinicW, 0.25, clinicD), concreteMat);
+    floor.position.set(0, 0.125, 0);
+    floor.receiveShadow = true;
+    fhGroup.add(floor);
+
+    // Front Wall with open double doorway (doorW: 3.2)
+    const doorW = 3.2;
+    const segW = (clinicW - doorW) / 2;
+    const frontZ = clinicD / 2;
+
+    const frontL = new THREE.Mesh(new THREE.BoxGeometry(segW, clinicH, wallThick), concreteMat);
+    frontL.position.set(-clinicW / 2 + segW / 2, clinicH / 2, frontZ);
+    frontL.castShadow = true;
+    fhGroup.add(frontL);
+
+    const frontR = new THREE.Mesh(new THREE.BoxGeometry(segW, clinicH, wallThick), concreteMat);
+    frontR.position.set(clinicW / 2 - segW / 2, clinicH / 2, frontZ);
+    frontR.castShadow = true;
+    fhGroup.add(frontR);
+
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(doorW, clinicH - 3.0, wallThick), concreteMat);
+    lintel.position.set(0, 3.0 + (clinicH - 3.0) / 2, frontZ);
+    fhGroup.add(lintel);
+
+    // Red Cross emblem above entrance
+    const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.35, 1.2, 0.08), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+    crossV.position.set(0, 4.0, frontZ + 0.25);
+    fhGroup.add(crossV);
+    const crossH = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.35, 0.08), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+    crossH.position.set(0, 4.0, frontZ + 0.25);
+    fhGroup.add(crossH);
+
+    // Back & Side walls
+    const backZ = -clinicD / 2;
+    const back = new THREE.Mesh(new THREE.BoxGeometry(clinicW, clinicH, wallThick), concreteMat);
+    back.position.set(0, clinicH / 2, backZ);
+    back.castShadow = true;
+    fhGroup.add(back);
+
+    const left = new THREE.Mesh(new THREE.BoxGeometry(wallThick, clinicH, clinicD), concreteMat);
+    left.position.set(-clinicW / 2, clinicH / 2, 0);
+    left.castShadow = true;
+    fhGroup.add(left);
+
+    const right = new THREE.Mesh(new THREE.BoxGeometry(wallThick, clinicH, clinicD), concreteMat);
+    right.position.set(clinicW / 2, clinicH / 2, 0);
+    right.castShadow = true;
+    fhGroup.add(right);
+
+    // Roof
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(clinicW + 0.8, 0.3, clinicD + 0.8), darkMetalMat);
+    roof.position.set(0, clinicH + 0.15, 0);
+    fhGroup.add(roof);
+
+    // Interior Triage Clinic Props
+    // 2 Hospital Gurney Beds
+    for (const bx of [-4.5, 4.5]) {
+      const gurney = new THREE.Group();
+      gurney.position.set(bx, 0, 0);
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.65, 2.4), darkMetalMat);
+      frame.position.y = 0.325;
+      gurney.add(frame);
+      const mattress = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.18, 2.3), new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.7 }));
+      mattress.position.y = 0.74;
+      gurney.add(mattress);
+      fhGroup.add(gurney);
+      colliders.push({ minX: cx + bx - 0.75, maxX: cx + bx + 0.75, minZ: cz - 1.3, maxZ: cz + 1.3 });
+    }
+
+    // Medical Privacy Partition Screen
+    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.9, 2.6), tarpMat);
+    screen.position.set(-2.2, 0.95, 0);
+    fhGroup.add(screen);
+
+    // Medical Supply Cabinet & Desk along back wall
+    const medDesk = new THREE.Mesh(new THREE.BoxGeometry(3.6, 1.0, 0.9), woodMat);
+    medDesk.position.set(0, 0.5, backZ + 1.2);
+    fhGroup.add(medDesk);
+    colliders.push({ minX: cx - 1.9, maxX: cx + 1.9, minZ: cz + backZ + 0.7, maxZ: cz + backZ + 1.7 });
+
+    // Interior medical cyan/white light
+    const triageLight = new THREE.PointLight(0xa5f3fc, 0.85, 15, 1.7);
+    triageLight.position.set(0, clinicH - 0.6, 0);
+    fhGroup.add(triageLight);
+
+    // Exterior Triage Tents & Sandbag Barriers
+    for (const tx of [-14, 14]) {
+      const tentGeo = new THREE.ConeGeometry(4.2, 3.4, 4);
+      tentGeo.rotateY(Math.PI / 4);
+      const tent = new THREE.Mesh(tentGeo, tarpMat);
+      tent.position.set(tx, 1.7, 0);
+      tent.castShadow = true;
+      fhGroup.add(tent);
+      colliders.push({ minX: cx + tx - 2.5, maxX: cx + tx + 2.5, minZ: cz - 2.5, maxZ: cz + 2.5 });
+    }
+
+    for (const sz of [-10, 10]) {
+      const sandbag = new THREE.Mesh(new THREE.BoxGeometry(10, 1.1, 0.8), woodMat);
+      sandbag.position.set(0, 0.55, sz);
+      fhGroup.add(sandbag);
+      colliders.push({ minX: cx - 5, maxX: cx + 5, minZ: cz + sz - 0.45, maxZ: cz + sz + 0.45 });
+    }
+
+    sceneGroup.add(fhGroup);
+
+    // Wall colliders leaving the 3.2m front doorway open
+    colliders.push({ minX: cx - clinicW / 2, maxX: cx - doorW / 2, minZ: cz + frontZ - 0.25, maxZ: cz + frontZ + 0.25 });
+    colliders.push({ minX: cx + doorW / 2, maxX: cx + clinicW / 2, minZ: cz + frontZ - 0.25, maxZ: cz + frontZ + 0.25 });
+    colliders.push({ minX: cx - clinicW / 2, maxX: cx + clinicW / 2, minZ: cz + backZ - 0.25, maxZ: cz + backZ + 0.25 });
+    colliders.push({ minX: cx - clinicW / 2 - 0.25, maxX: cx - clinicW / 2 + 0.25, minZ: cz + backZ, maxZ: cz + frontZ });
+    colliders.push({ minX: cx + clinicW / 2 - 0.25, maxX: cx + clinicW / 2 + 0.25, minZ: cz + backZ, maxZ: cz + frontZ });
+  }
+
+  createFieldHospital(-15, -88);
+
+  // -------------------------------------------------------------
+  // SECTOR 5: INDUSTRIAL WAREHOUSE DEPOT (Far East: X: 115 to 150, Z: 60 to 95)
+  // -------------------------------------------------------------
+  function createIndustrialWarehouse(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const whGroup = new THREE.Group();
+    whGroup.position.set(cx, gy, cz);
+
+    const w = 24;
+    const h = 8.5;
+    const d = 20;
+
+    // Floor
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.25, d), concreteMat);
+    floor.position.set(0, 0.125, 0);
+    floor.receiveShadow = true;
+    whGroup.add(floor);
+
+    // Warehouse Hull with open loading bay
+    const bayW = 6.0;
+    const segW = (w - bayW) / 2;
+    const frontL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, 0.5), rustMat);
+    frontL.position.set(-w / 2 + segW / 2, h / 2, d / 2);
+    whGroup.add(frontL);
+
+    const frontR = new THREE.Mesh(new THREE.BoxGeometry(segW, h, 0.5), rustMat);
+    frontR.position.set(w / 2 - segW / 2, h / 2, d / 2);
+    whGroup.add(frontR);
+
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(bayW, h - 4.5, 0.5), rustMat);
+    lintel.position.set(0, 4.5 + (h - 4.5) / 2, d / 2);
+    whGroup.add(lintel);
+
+    const back = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.5), rustMat);
+    back.position.set(0, h / 2, -d / 2);
+    whGroup.add(back);
+
+    const left = new THREE.Mesh(new THREE.BoxGeometry(0.5, h, d), rustMat);
+    left.position.set(-w / 2, h / 2, 0);
+    whGroup.add(left);
+
+    const right = new THREE.Mesh(new THREE.BoxGeometry(0.5, h, d), rustMat);
+    right.position.set(w / 2, h / 2, 0);
+    whGroup.add(right);
+
+    // Corrugated Gabled Roof
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 1, 0.3, d + 1), darkMetalMat);
+    roof.position.set(0, h + 0.15, 0);
+    whGroup.add(roof);
+
+    // Interior Storage Pallet Racks & Crates
+    const rack1 = new THREE.Mesh(new THREE.BoxGeometry(7.0, 4.5, 1.2), darkMetalMat);
+    rack1.position.set(-8.5, 2.25, 0);
+    whGroup.add(rack1);
+    colliders.push({ minX: cx - 12.2, maxX: cx - 4.8, minZ: cz - 0.7, maxZ: cz + 0.7 });
+
+    const crateStack = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.2, 2.4), woodMat);
+    crateStack.position.set(7.5, 1.1, -4.5);
+    whGroup.add(crateStack);
+    colliders.push({ minX: cx + 6.2, maxX: cx + 8.8, minZ: cz - 5.8, maxZ: cz - 3.2 });
+
+    // Interior industrial sodium high-bay light
+    const bayLight = new THREE.PointLight(0xffbe6b, 1.2, 22, 1.6);
+    bayLight.position.set(0, h - 1.2, 0);
+    whGroup.add(bayLight);
+
+    // Shipping Container stack outside
+    const containerMat = new THREE.MeshStandardMaterial({ color: 0x1d4ed8, roughness: 0.6, metalness: 0.4 });
+    const c1 = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.6, 6.5), containerMat);
+    c1.position.set(-16, 1.3, 0);
+    whGroup.add(c1);
+    colliders.push({ minX: cx - 17.5, maxX: cx - 14.5, minZ: cz - 3.5, maxZ: cz + 3.5 });
+
+    sceneGroup.add(whGroup);
+
+    colliders.push({ minX: cx - w / 2, maxX: cx - bayW / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
+    colliders.push({ minX: cx + bayW / 2, maxX: cx + w / 2, minZ: cz + d / 2 - 0.3, maxZ: cz + d / 2 + 0.3 });
     colliders.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2 - 0.3, maxZ: cz - d / 2 + 0.3 });
     colliders.push({ minX: cx - w / 2 - 0.3, maxX: cx - w / 2 + 0.3, minZ: cz - d / 2, maxZ: cz + d / 2 });
     colliders.push({ minX: cx + w / 2 - 0.3, maxX: cx + w / 2 + 0.3, minZ: cz - d / 2, maxZ: cz + d / 2 });
   }
 
-  createRuinedHouse(-24, 28);
+  createIndustrialWarehouse(128, 72);
 
-  // 4. Abandoned Vehicles with Detailed Parts (Sedans, Trucks, Police Cruiser)
-  function createVehicle(
+  // -------------------------------------------------------------
+  // SECTOR 6: FOREST RANGER CABIN & LOGGING CAMP (West: X: -105, Z: 25)
+  // -------------------------------------------------------------
+  function createRangerCabin(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const rcGroup = new THREE.Group();
+    rcGroup.position.set(cx, gy, cz);
+
+    const w = 10;
+    const h = 4.5;
+    const d = 9;
+    const floorY = 1.5;
+
+    // Raised Log Stilts under Cabin and Deck
+    for (const sx of [-4.2, 4.2]) {
+      for (const sz of [-3.8, 0, 3.8, 5.5]) {
+        const stilt = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, floorY, 8), darkMetalMat);
+        stilt.position.set(sx, floorY / 2, sz);
+        stilt.castShadow = true;
+        rcGroup.add(stilt);
+      }
+    }
+
+    // Front Deck / Porch (w: 10, d: 3)
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(w, 0.22, 3), woodMat);
+    deck.position.set(0, floorY, d / 2 + 1.5);
+    deck.receiveShadow = true;
+    rcGroup.add(deck);
+
+    // Deck Handrails
+    const railL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.0, 3), woodMat);
+    railL.position.set(-w / 2 + 0.1, floorY + 0.5, d / 2 + 1.5);
+    rcGroup.add(railL);
+    colliders.push({ minX: cx - w / 2, maxX: cx - w / 2 + 0.25, minZ: cz + d / 2, maxZ: cz + d / 2 + 3 });
+
+    const railR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.0, 3), woodMat);
+    railR.position.set(w / 2 - 0.1, floorY + 0.5, d / 2 + 1.5);
+    rcGroup.add(railR);
+    colliders.push({ minX: cx + w / 2 - 0.25, maxX: cx + w / 2, minZ: cz + d / 2, maxZ: cz + d / 2 + 3 });
+
+    // Wooden Access Ramp leading smoothly up from ground level to deck
+    const rampW = 3.0;
+    const rampLen = 4.5;
+    const rampAngle = Math.atan2(floorY, rampLen);
+    const rampMesh = new THREE.Mesh(new THREE.BoxGeometry(rampW, 0.18, Math.sqrt(rampLen * rampLen + floorY * floorY)), woodMat);
+    rampMesh.position.set(0, floorY / 2, d / 2 + 3 + rampLen / 2);
+    rampMesh.rotation.x = rampAngle;
+    rampMesh.receiveShadow = true;
+    rcGroup.add(rampMesh);
+
+    // Cabin Interior Floor
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.22, d), woodMat);
+    floor.position.set(0, floorY, 0);
+    floor.receiveShadow = true;
+    rcGroup.add(floor);
+
+    // Front wall with open doorway (doorW: 2.2)
+    const doorW = 2.2;
+    const segW = (w - doorW) / 2;
+    const frontZ = d / 2;
+
+    const frontL = new THREE.Mesh(new THREE.BoxGeometry(segW, h, 0.35), woodMat);
+    frontL.position.set(-w / 2 + segW / 2, floorY + h / 2, frontZ);
+    frontL.castShadow = true;
+    rcGroup.add(frontL);
+
+    const frontR = new THREE.Mesh(new THREE.BoxGeometry(segW, h, 0.35), woodMat);
+    frontR.position.set(w / 2 - segW / 2, floorY + h / 2, frontZ);
+    frontR.castShadow = true;
+    rcGroup.add(frontR);
+
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(doorW, h - 2.8, 0.35), woodMat);
+    lintel.position.set(0, floorY + 2.8 + (h - 2.8) / 2, frontZ);
+    rcGroup.add(lintel);
+
+    // Back & Side walls
+    const backZ = -d / 2;
+    const back = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.35), woodMat);
+    back.position.set(0, floorY + h / 2, backZ);
+    back.castShadow = true;
+    rcGroup.add(back);
+
+    const sideL = new THREE.Mesh(new THREE.BoxGeometry(0.35, h, d), woodMat);
+    sideL.position.set(-w / 2, floorY + h / 2, 0);
+    sideL.castShadow = true;
+    rcGroup.add(sideL);
+
+    const sideR = new THREE.Mesh(new THREE.BoxGeometry(0.35, h, d), woodMat);
+    sideR.position.set(w / 2, floorY + h / 2, 0);
+    sideR.castShadow = true;
+    rcGroup.add(sideR);
+
+    // Gabled Roof
+    const roofL = new THREE.Mesh(new THREE.BoxGeometry(w * 0.58, 0.25, d + 1.2), darkMetalMat);
+    roofL.position.set(-w * 0.26, floorY + h + 0.9, 0);
+    roofL.rotation.z = 0.38;
+    rcGroup.add(roofL);
+
+    const roofR = new THREE.Mesh(new THREE.BoxGeometry(w * 0.58, 0.25, d + 1.2), darkMetalMat);
+    roofR.position.set(w * 0.26, floorY + h + 0.9, 0);
+    roofR.rotation.z = -0.38;
+    rcGroup.add(roofR);
+
+    // Interior Furniture
+    // Ranger Bunk Bed
+    const bunk = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 2.4), woodMat);
+    bunk.position.set(-w / 2 + 1.2, floorY + 0.8, -d / 2 + 1.5);
+    rcGroup.add(bunk);
+    colliders.push({ minX: cx - w / 2, maxX: cx - w / 2 + 2.0, minZ: cz - d / 2, maxZ: cz - d / 2 + 2.8 });
+
+    // Ranger Desk with Radio & Map
+    const desk = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.9, 1.1), woodMat);
+    desk.position.set(w / 2 - 1.5, floorY + 0.45, -d / 2 + 1.4);
+    rcGroup.add(desk);
+
+    const radio = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.35, 0.4), darkMetalMat);
+    radio.position.set(w / 2 - 1.2, floorY + 1.05, -d / 2 + 1.4);
+    rcGroup.add(radio);
+    colliders.push({ minX: cx + w / 2 - 2.8, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz - d / 2 + 2.2 });
+
+    // Wood-burning stove with vertical chimney pipe
+    const stove = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.1, 0.85), darkMetalMat);
+    stove.position.set(w / 2 - 1.3, floorY + 0.55, 1.8);
+    rcGroup.add(stove);
+
+    const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 3.6, 8), darkMetalMat);
+    pipe.position.set(w / 2 - 1.3, floorY + 2.6, 1.8);
+    rcGroup.add(pipe);
+
+    // Cozy interior amber light
+    const cabinLight = new THREE.PointLight(0xffa843, 0.8, 12, 2);
+    cabinLight.position.set(0, floorY + h - 0.7, 0);
+    rcGroup.add(cabinLight);
+
+    sceneGroup.add(rcGroup);
+
+    // Colliders leaving doorway open
+    colliders.push({ minX: cx - w / 2, maxX: cx - doorW / 2, minZ: cz + frontZ - 0.25, maxZ: cz + frontZ + 0.25 });
+    colliders.push({ minX: cx + doorW / 2, maxX: cx + w / 2, minZ: cz + frontZ - 0.25, maxZ: cz + frontZ + 0.25 });
+    colliders.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz + backZ - 0.25, maxZ: cz + backZ + 0.25 });
+    colliders.push({ minX: cx - w / 2 - 0.25, maxX: cx - w / 2 + 0.25, minZ: cz + backZ, maxZ: cz + frontZ });
+    colliders.push({ minX: cx + w / 2 - 0.25, maxX: cx + w / 2 + 0.25, minZ: cz + backZ, maxZ: cz + frontZ });
+  }
+
+  createRangerCabin(-105, 25);
+
+  // Radio Transmission Tower Landmark on the western ridge
+  function createRadioTransmissionTower(x: number, z: number) {
+    const gy = getTerrainHeight(x, z);
+    const towerGroup = new THREE.Group();
+    towerGroup.position.set(x, gy, z);
+
+    const towerH = 32;
+    const baseW = 5.5;
+    const topW = 1.2;
+
+    // 4 Truss Legs
+    const legGeo = new THREE.CylinderGeometry(0.12, 0.2, towerH, 6);
+    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 2) {
+      const leg = new THREE.Mesh(legGeo, darkMetalMat);
+      const lx = (Math.cos(angle) * (baseW + topW)) / 4;
+      const lz = (Math.sin(angle) * (baseW + topW)) / 4;
+      leg.position.set(lx, towerH / 2, lz);
+      leg.rotation.z = -Math.cos(angle) * 0.07;
+      leg.rotation.x = Math.sin(angle) * 0.07;
+      towerGroup.add(leg);
+    }
+
+    // Horizontal cross-tie frames
+    for (let ty = 6; ty < towerH; ty += 6) {
+      const frac = ty / towerH;
+      const bw = baseW * (1 - frac) + topW * frac;
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(bw, 0.15, bw), hazardMat);
+      frame.position.y = ty;
+      towerGroup.add(frame);
+    }
+
+    // Top Antenna Spire
+    const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.1, 7.0, 6), darkMetalMat);
+    spire.position.y = towerH + 3.5;
+    towerGroup.add(spire);
+
+    // Red Blinking Aviation Warning Beacon
+    const beaconBulb = new THREE.Mesh(new THREE.SphereGeometry(0.35, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff1111 }));
+    beaconBulb.position.y = towerH + 7.0;
+    towerGroup.add(beaconBulb);
+
+    const beaconLight = new THREE.PointLight(0xff1111, 2.5, 80, 1.4);
+    beaconLight.position.set(x, gy + towerH + 7.0, z);
+    sceneGroup.add(beaconLight);
+
+    sceneGroup.add(towerGroup);
+    colliders.push({ minX: x - baseW / 2, maxX: x + baseW / 2, minZ: z - baseW / 2, maxZ: z + baseW / 2 });
+  }
+
+  createRadioTransmissionTower(-140, 22);
+
+  // Highway Directional Road Signs for Navigation
+  function createRoadSign(x: number, z: number, rotY: number) {
+    const gy = getTerrainHeight(x, z);
+    const sg = new THREE.Group();
+    sg.position.set(x, gy, z);
+    sg.rotation.y = rotY;
+
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.2, 8), darkMetalMat);
+    post.position.y = 1.6;
+    sg.add(post);
+
+    const board = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.2, 0.08), hazardMat);
+    board.position.set(0, 2.5, 0);
+    sg.add(board);
+
+    sceneGroup.add(sg);
+    colliders.push({ minX: x - 0.25, maxX: x + 0.25, minZ: z - 0.25, maxZ: z + 0.25 });
+  }
+
+  createRoadSign(6.8, 8, -Math.PI / 2);
+  createRoadSign(62, -6.5, Math.PI);
+  createRoadSign(-60, 6.5, 0);
+  createRoadSign(-6.8, -60, Math.PI / 2);
+
+  // 4. Abandoned Vehicles Across Roads & Highways
+  function createGroundedVehicle(
     x: number,
     z: number,
     rotY: number,
     type: 'sedan' | 'truck' | 'police' = 'sedan',
     rustColor: number = 0x5a2016
   ) {
+    const gy = getTerrainHeight(x, z);
     const vGroup = new THREE.Group();
-    vGroup.position.set(x, 0, z);
+    vGroup.position.set(x, gy, z);
     vGroup.rotation.y = rotY;
 
     const bodyMat = new THREE.MeshStandardMaterial({
@@ -438,14 +1015,11 @@ export function buildPostApocalypticTown(): WorldBuildResult {
       metalness: 0.45,
     });
 
-    const wheelMat = new THREE.MeshStandardMaterial({
-      color: 0x141416,
-      roughness: 0.9,
-    });
-
+    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.9 });
     const bodyW = 2.1;
     const bodyH = 0.75;
     const bodyL = type === 'truck' ? 5.2 : 4.5;
+
     const chassis = new THREE.Mesh(new THREE.BoxGeometry(bodyW, bodyH, bodyL), bodyMat);
     chassis.position.set(0, 0.65, 0);
     chassis.castShadow = true;
@@ -457,7 +1031,6 @@ export function buildPostApocalypticTown(): WorldBuildResult {
     const cabinZ = type === 'truck' ? -0.7 : -0.2;
     const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabinW, cabinH, cabinL), bodyMat);
     cabin.position.set(0, 0.65 + bodyH / 2 + cabinH / 2, cabinZ);
-    cabin.castShadow = true;
     vGroup.add(cabin);
 
     // Windshield
@@ -466,7 +1039,7 @@ export function buildPostApocalypticTown(): WorldBuildResult {
     ws.rotation.x = -0.3;
     vGroup.add(ws);
 
-    // Wheels
+    // 4 Wheels
     const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.32, 12);
     wheelGeo.rotateZ(Math.PI / 2);
     const wheelPositions = [
@@ -478,83 +1051,67 @@ export function buildPostApocalypticTown(): WorldBuildResult {
     wheelPositions.forEach(([wx, wy, wz]) => {
       const wheel = new THREE.Mesh(wheelGeo, wheelMat);
       wheel.position.set(wx, wy, wz);
-      wheel.castShadow = true;
       vGroup.add(wheel);
     });
 
-    // Police lightbar if police cruiser
-    if (type === 'police') {
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.12, 0.25), darkMetalMat);
-      bar.position.set(0, 1.85, cabinZ);
-      const sirenL = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.1, 0.2), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
-      sirenL.position.set(-0.3, 1.9, cabinZ);
-      const sirenR = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.1, 0.2), new THREE.MeshBasicMaterial({ color: 0x3b82f6 }));
-      sirenR.position.set(0.3, 1.9, cabinZ);
-      vGroup.add(bar);
-      vGroup.add(sirenL);
-      vGroup.add(sirenR);
-    }
-
     sceneGroup.add(vGroup);
-
     const halfDiag = Math.max(bodyW, bodyL) / 1.7;
     colliders.push({ minX: x - halfDiag, maxX: x + halfDiag, minZ: z - halfDiag, maxZ: z + halfDiag });
   }
 
-  createVehicle(-2.5, -15, 0.25, 'sedan', 0x5a2016);
-  createVehicle(3.2, 14, -0.4, 'truck', 0x22354a);
-  createVehicle(-16, -3, 1.4, 'police');
-  createVehicle(16, 2, -1.2, 'sedan', 0x3d3d3d);
-  createVehicle(-1, 38, 0.15, 'truck', 0x4d281a);
-  createVehicle(2, -38, -0.2, 'sedan', 0x6e3820);
+  // Vehicles along highways and towns
+  createGroundedVehicle(-2.5, -15, 0.25, 'sedan', 0x5a2016);
+  createGroundedVehicle(3.2, 14, -0.4, 'truck', 0x22354a);
+  createGroundedVehicle(-16, -3, 1.4, 'police');
+  createGroundedVehicle(16, 2, -1.2, 'sedan', 0x3d3d3d);
+  createGroundedVehicle(55, -2, 0.3, 'sedan', 0x48241b);
+  createGroundedVehicle(105, 4, -0.6, 'truck', 0x2d3a45);
+  createGroundedVehicle(0, 52, 0.1, 'sedan', 0x6e3820);
+  createGroundedVehicle(-4, -68, -0.2, 'police');
 
-  // 5. Instanced Natural Rocks & Boulders (Zero-lag 60fps)
+  // 5. Instanced Natural Rocks & Boulders Grounded Across All Sectors
   const rockGeo = new THREE.DodecahedronGeometry(1.0, 1);
-  const rockCount = 38;
-  const rockInstanced = new THREE.InstancedMesh(rockGeo, rockMat, rockCount);
+  const rockPositions = [
+    [-18, -12], [16, -14], [-18, 16], [16, 18], [-38, -20], [38, -18],
+    [-42, 22], [42, 24], [-10, 25], [10, -25], [-28, 4], [30, -6],
+    [-65, -15], [68, 22], [-85, 45], [95, -25], [-110, -35], [115, 35],
+    [-55, 60], [58, 75], [-75, -60], [80, -45], [-120, 15], [130, -15],
+    [-95, -75], [105, 95], [-45, -110], [50, 110], [-130, 65], [140, 45]
+  ];
+
+  const rockInstanced = new THREE.InstancedMesh(rockGeo, rockMat, rockPositions.length);
   rockInstanced.castShadow = true;
   rockInstanced.receiveShadow = true;
 
   const dummy = new THREE.Object3D();
-  const rockSpawns = [
-    [-15, -12], [14, -14], [-18, 16], [16, 18], [-36, -20], [35, -18],
-    [-38, 22], [36, 24], [-8, 25], [8, -25], [-26, 4], [28, -6],
-    [-46, -10], [45, 12], [-48, 30], [48, -32], [-14, -40], [15, 42],
-    [-30, -42], [32, 44], [-4, -48], [6, 48], [-44, 4], [44, -4],
-    [-12, 8], [12, -8], [-22, -16], [24, 14], [-34, 10], [33, -12],
-    [-40, -35], [42, 38], [-28, 38], [26, -42], [-50, -2], [50, 2],
-    [-2, -26], [3, 28]
-  ];
-
-  rockSpawns.forEach(([rx, rz], idx) => {
-    const s = 0.6 + Math.random() * 0.9;
-    dummy.position.set(rx, s * 0.45, rz);
+  rockPositions.forEach(([rx, rz], idx) => {
+    const gy = getTerrainHeight(rx, rz);
+    const s = 0.7 + Math.random() * 1.1;
+    dummy.position.set(rx, gy + s * 0.45, rz);
     dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-    dummy.scale.set(s * (0.8 + Math.random() * 0.4), s, s * (0.8 + Math.random() * 0.4));
+    dummy.scale.set(s, s * 0.85, s);
     dummy.updateMatrix();
     rockInstanced.setMatrixAt(idx, dummy.matrix);
-
-    colliders.push({ minX: rx - s * 0.6, maxX: rx + s * 0.6, minZ: rz - s * 0.6, maxZ: rz + s * 0.6 });
+    colliders.push({ minX: rx - s * 0.65, maxX: rx + s * 0.65, minZ: rz - s * 0.65, maxZ: rz + s * 0.65 });
   });
   rockInstanced.instanceMatrix.needsUpdate = true;
   sceneGroup.add(rockInstanced);
 
-  // 6. Lush Conifer Pine Trees & Dead Gnarled Oaks
+  // 6. Lush Conifer Pine Trees & Dense Whispering Pines Forest
   function createPineTree(x: number, z: number) {
+    const gy = getTerrainHeight(x, z);
     const tGroup = new THREE.Group();
-    tGroup.position.set(x, 0, z);
+    tGroup.position.set(x, gy, z);
 
-    // Trunk
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.45, 6, 8), darkMetalMat);
-    trunk.position.y = 3;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.45, 6.2, 8), darkMetalMat);
+    trunk.position.y = 3.1;
     trunk.castShadow = true;
     tGroup.add(trunk);
 
-    // 3 Tiers of Pine Needle Cones
     const tiers = [
-      { y: 3.5, r: 2.4, h: 2.8 },
-      { y: 5.2, r: 1.8, h: 2.4 },
-      { y: 6.8, r: 1.1, h: 2.0 },
+      { y: 3.5, r: 2.5, h: 2.8 },
+      { y: 5.3, r: 1.9, h: 2.5 },
+      { y: 7.0, r: 1.2, h: 2.0 },
     ];
     tiers.forEach((t) => {
       const cone = new THREE.Mesh(new THREE.ConeGeometry(t.r, t.h, 7), pineNeedleMat);
@@ -564,70 +1121,42 @@ export function buildPostApocalypticTown(): WorldBuildResult {
     });
 
     sceneGroup.add(tGroup);
-    windObjects.push(tGroup); // Will gently sway with wind in the game loop!
-    colliders.push({ minX: x - 0.4, maxX: x + 0.4, minZ: z - 0.4, maxZ: z + 0.4 });
-  }
-
-  function createDeadTree(x: number, z: number) {
-    const tGroup = new THREE.Group();
-    tGroup.position.set(x, 0, z);
-
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.4, 5.2, 7), darkMetalMat);
-    trunk.position.y = 2.6;
-    trunk.rotation.z = (Math.random() - 0.5) * 0.15;
-    trunk.castShadow = true;
-    tGroup.add(trunk);
-
-    for (let i = 0; i < 4; i++) {
-      const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.15, 2.6, 5), darkMetalMat);
-      branch.position.set(0, 3.6 + i * 0.35, 0);
-      branch.rotation.y = (i * Math.PI) / 2 + Math.random() * 0.4;
-      branch.rotation.z = 0.65 + Math.random() * 0.3;
-      branch.castShadow = true;
-      tGroup.add(branch);
-    }
-
-    sceneGroup.add(tGroup);
     windObjects.push(tGroup);
     colliders.push({ minX: x - 0.45, maxX: x + 0.45, minZ: z - 0.45, maxZ: z + 0.45 });
   }
 
-  // Pine Forest & Dead Tree Clusters
-  createPineTree(-14, -22);
-  createPineTree(14, -24);
-  createPineTree(-18, 22);
-  createPineTree(18, 18);
-  createPineTree(-36, -30);
-  createPineTree(36, -32);
-  createPineTree(-38, 34);
-  createPineTree(38, 36);
-  createPineTree(-46, -18);
-  createPineTree(46, 20);
-
-  createDeadTree(-11, -17);
-  createDeadTree(12, 14);
-  createDeadTree(-32, 2);
-  createDeadTree(34, 4);
-
-  // 7. Instanced Bushes & Overgrowth Tufts
-  const bushGeo = new THREE.DodecahedronGeometry(0.9, 1);
-  const bushCount = 42;
-  const bushInstanced = new THREE.InstancedMesh(bushGeo, shrubMat, bushCount);
-  bushInstanced.castShadow = true;
-
-  const bushSpawns = [
-    [-8, -14], [9, -16], [-12, 12], [10, 14], [-20, -18], [22, -20],
-    [-24, 18], [25, 16], [-30, -12], [32, 10], [-40, -14], [42, 16],
-    [-15, 30], [16, -30], [-6, 32], [7, -34], [-28, 32], [29, -36],
-    [-34, -24], [35, 26], [-42, 28], [44, -28], [-4, -18], [5, 20],
-    [-19, -8], [20, 8], [-26, -6], [27, 6], [-33, 18], [34, -16],
-    [-37, -6], [39, 8], [-45, 10], [47, -12], [-11, -38], [13, 38],
-    [-21, 42], [23, -42], [-47, -38], [49, 40], [-3, 44], [4, -46]
+  // Pine tree placement across the open world and dense western forest
+  const pineSpawns = [
+    [-15, -24], [15, -26], [-18, 24], [18, 20], [-42, -32], [42, -34],
+    [-44, 38], [44, 40], [-55, -20], [60, -25], [-70, 15], [75, 25],
+    // Deep Western Forest (Dense grove)
+    [-85, 10], [-95, 30], [-105, -15], [-115, 20], [-125, -5], [-135, 35],
+    [-90, -40], [-100, 50], [-110, -55], [-120, 60], [-130, -30], [-140, 10],
+    [-75, 45], [-80, -25], [-95, -10], [-105, 45], [-115, -25], [-125, 50],
+    // Eastern and Northern Highway trees
+    [95, -15], [110, 10], [130, 30], [80, 50], [100, 65], [-35, -75],
+    [-45, -95], [35, -80], [45, -100], [-15, -115], [20, -115]
   ];
 
-  bushSpawns.forEach(([bx, bz], idx) => {
-    const s = 0.7 + Math.random() * 0.5;
-    dummy.position.set(bx, s * 0.55, bz);
+  pineSpawns.forEach(([px, pz]) => createPineTree(px, pz));
+
+  // 7. Instanced Bushes & Overgrowth Grounded Correctly
+  const bushGeo = new THREE.DodecahedronGeometry(0.9, 1);
+  const bushPositions = [
+    [-8, -14], [9, -16], [-12, 12], [10, 14], [-24, 18], [25, 16],
+    [-38, -14], [40, 16], [-50, 10], [52, -12], [-65, 35], [70, -35],
+    [-80, 20], [85, 30], [-95, -20], [105, 15], [-115, 40], [125, -40],
+    [-30, 85], [32, 85], [-15, 95], [18, 95], [-45, -85], [45, -85],
+    [-75, -45], [80, -60], [-100, 5], [115, 60], [-135, 15], [140, -10]
+  ];
+
+  const bushInstanced = new THREE.InstancedMesh(bushGeo, shrubMat, bushPositions.length);
+  bushInstanced.castShadow = true;
+
+  bushPositions.forEach(([bx, bz], idx) => {
+    const gy = getTerrainHeight(bx, bz);
+    const s = 0.7 + Math.random() * 0.55;
+    dummy.position.set(bx, gy + s * 0.55, bz);
     dummy.rotation.set(0, Math.random() * Math.PI * 2, 0);
     dummy.scale.set(s * 1.3, s * 0.85, s * 1.2);
     dummy.updateMatrix();
@@ -636,10 +1165,11 @@ export function buildPostApocalypticTown(): WorldBuildResult {
   bushInstanced.instanceMatrix.needsUpdate = true;
   sceneGroup.add(bushInstanced);
 
-  // 8. Streetlights with Automatic Night Activation
+  // 8. Streetlights Grounded in Towns and Along Highways
   function createStreetlight(x: number, z: number, lightFacing: number = 0) {
+    const gy = getTerrainHeight(x, z);
     const slGroup = new THREE.Group();
-    slGroup.position.set(x, 0, z);
+    slGroup.position.set(x, gy, z);
 
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 6, 8), darkMetalMat);
     pole.position.set(0, 3, 0);
@@ -661,8 +1191,8 @@ export function buildPostApocalypticTown(): WorldBuildResult {
     slGroup.rotation.y = lightFacing;
     sceneGroup.add(slGroup);
 
-    const pLight = new THREE.PointLight(0xffa238, 1.4, 24, 1.8);
-    const worldPos = new THREE.Vector3(0, 5.5, 1.6).applyAxisAngle(new THREE.Vector3(0, 1, 0), lightFacing).add(new THREE.Vector3(x, 0, z));
+    const pLight = new THREE.PointLight(0xffa238, 1.4, 26, 1.8);
+    const worldPos = new THREE.Vector3(0, 5.5, 1.6).applyAxisAngle(new THREE.Vector3(0, 1, 0), lightFacing).add(new THREE.Vector3(x, gy, z));
     pLight.position.copy(worldPos);
     sceneGroup.add(pLight);
     streetlights.push(pLight);
@@ -674,11 +1204,16 @@ export function buildPostApocalypticTown(): WorldBuildResult {
   createStreetlight(6.5, -4, -Math.PI / 2);
   createStreetlight(-6.5, 20, Math.PI / 2);
   createStreetlight(6.5, 36, -Math.PI / 2);
+  createStreetlight(50, -6.5, Math.PI);
+  createStreetlight(85, -6.5, Math.PI);
+  createStreetlight(0, 75, -Math.PI / 2);
+  createStreetlight(-6.5, -80, Math.PI / 2);
 
-  // 9. Barricades, Crates, Barrels
+  // 9. Tactical Barricades & Roadblocks (Placed at logical checkpoints)
   function createBarricade(x: number, z: number, rotY: number) {
+    const gy = getTerrainHeight(x, z);
     const bGroup = new THREE.Group();
-    bGroup.position.set(x, 0, z);
+    bGroup.position.set(x, gy, z);
     bGroup.rotation.y = rotY;
 
     const s1 = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.2, 0.6), woodMat);
@@ -699,102 +1234,169 @@ export function buildPostApocalypticTown(): WorldBuildResult {
 
   createBarricade(0, -42, 0);
   createBarricade(0, 48, 0);
-  createBarricade(-38, 0, Math.PI / 2);
-  createBarricade(38, 0, Math.PI / 2);
+  createBarricade(-42, 0, Math.PI / 2);
+  createBarricade(42, 0, Math.PI / 2);
 
-  function createCrate(x: number, y: number, z: number, s: number = 1.0) {
-    const crate = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), woodMat);
-    crate.position.set(x, y + s / 2, z);
-    crate.castShadow = true;
-    crate.receiveShadow = true;
-    sceneGroup.add(crate);
-    colliders.push({ minX: x - s / 2, maxX: x + s / 2, minZ: z - s / 2, maxZ: z + s / 2 });
+  // -------------------------------------------------------------
+  // 10. VALIDATED GROUNDED SUPPLY SPAWN SYSTEM (PROBLEM 2 FIX)
+  // -------------------------------------------------------------
+  // Every candidate supply position is sampled on the actual terrain or building surface
+  // using getWorldSurfaceHeight(x, z). If an item is placed on an interior table,
+  // counter, desk, or truck bed, its exact surface elevation is applied.
+  // We validate every candidate against colliders so supplies NEVER spawn inside
+  // solid walls, rocks, or obstacles. If obstructed, a fallback search finds the
+  // nearest clear spot!
+  interface RawSupplyCandidate {
+    x: number;
+    z: number;
+    type: ItemType;
+    elevateOnSurface?: number; // Exact height of prop surface above floor (e.g. table, counter, truck bed)
   }
 
-  createCrate(-7.5, 0, -10, 1.1);
-  createCrate(-7.5, 0, -11.2, 1.0);
-  createCrate(7.2, 0, 8, 1.2);
-  createCrate(8.4, 0, 8.5, 1.0);
-
-  function createBarrel(x: number, z: number, rust: boolean = true) {
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1.1, 12), rust ? rustMat : darkMetalMat);
-    barrel.position.set(x, 0.55, z);
-    barrel.castShadow = true;
-    sceneGroup.add(barrel);
-    colliders.push({ minX: x - 0.45, maxX: x + 0.45, minZ: z - 0.45, maxZ: z + 0.45 });
+  function isSupplyObstructed(x: number, z: number, cols: BoxCollider[], buffer: number = 0.35): boolean {
+    for (const box of cols) {
+      if (
+        x >= box.minX - buffer &&
+        x <= box.maxX + buffer &&
+        z >= box.minZ - buffer &&
+        z <= box.maxZ + buffer
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
-  createBarrel(-6.8, -12);
-  createBarrel(6.8, 10);
-  createBarrel(23, -15);
-  createBarrel(-20, 16);
+  const rawSupplyCandidates: RawSupplyCandidate[] = [
+    // Sector 1: Downtown Pharmacy & Police Station
+    { x: 22, z: -21, type: 'medkit', elevateOnSurface: 0 },
+    { x: 24, z: -25, type: 'food', elevateOnSurface: 0 },
+    { x: 20, z: -25, type: 'water', elevateOnSurface: 0 },
+    { x: -21, z: -21, type: 'ammo', elevateOnSurface: 0 },
+    { x: -24, z: -24, type: 'ammo', elevateOnSurface: 0 },
+    { x: -19, z: -24, type: 'medkit', elevateOnSurface: 0 },
 
-  // 10. Perimeter Boundary Fences
-  const perimeterRadius = 54;
-  colliders.push({ minX: -perimeterRadius, maxX: perimeterRadius, minZ: -perimeterRadius - 2, maxZ: -perimeterRadius });
-  colliders.push({ minX: -perimeterRadius, maxX: perimeterRadius, minZ: perimeterRadius, maxZ: perimeterRadius + 2 });
-  colliders.push({ minX: -perimeterRadius - 2, maxX: -perimeterRadius, minZ: -perimeterRadius, maxZ: perimeterRadius });
-  colliders.push({ minX: perimeterRadius, maxX: perimeterRadius + 2, minZ: -perimeterRadius, maxZ: perimeterRadius });
+    // Sector 2: Suburban Houses & Yards
+    { x: -25, z: 76, type: 'food', elevateOnSurface: 0 },
+    { x: -22, z: 74, type: 'water', elevateOnSurface: 0 },
+    { x: 25, z: 76, type: 'ammo', elevateOnSurface: 0 },
+    { x: 22, z: 74, type: 'food', elevateOnSurface: 0 },
+    { x: -10, z: 62, type: 'medkit', elevateOnSurface: 0 },
+    { x: 12, z: 62, type: 'water', elevateOnSurface: 0 },
 
-  function createFenceSegment(x: number, z: number, length: number, isVertical: boolean) {
-    const fence = new THREE.Mesh(
-      new THREE.BoxGeometry(isVertical ? 0.2 : length, 2.5, isVertical ? length : 0.2),
-      new THREE.MeshStandardMaterial({ color: 0x484d52, roughness: 0.8, metalness: 0.6, wireframe: true })
-    );
-    fence.position.set(x, 1.25, z);
-    sceneGroup.add(fence);
-  }
+    // Sector 3: Highway Gas Station Convenience Store & Canopy
+    { x: 81.8, z: 7.2, type: 'food', elevateOnSurface: 1.1 }, // Convenience store checkout counter
+    { x: 86.8, z: 5.8, type: 'water', elevateOnSurface: 0 },  // Snack aisle floor
+    { x: 85, z: 3.8, type: 'ammo', elevateOnSurface: 0 },    // Cooler corner
+    { x: 105, z: 4, type: 'ammo', elevateOnSurface: 1.1 },    // Truck cargo bed outside
+    { x: 55, z: 1, type: 'water', elevateOnSurface: 0 },     // Highway checkpoint
 
-  createFenceSegment(0, -perimeterRadius, 108, false);
-  createFenceSegment(0, perimeterRadius, 108, false);
-  createFenceSegment(-perimeterRadius, 0, 108, true);
-  createFenceSegment(perimeterRadius, 0, 108, true);
+    // Sector 4: Quarantine Field Hospital Emergency Clinic
+    { x: -15, z: -92.5, type: 'medkit', elevateOnSurface: 1.0 }, // Medical desk
+    { x: -19.5, z: -88, type: 'medkit', elevateOnSurface: 0.8 },  // Examination gurney
+    { x: -12, z: -87, type: 'water', elevateOnSurface: 0 },      // Clinic floor
+    { x: -14, z: -82, type: 'food', elevateOnSurface: 0 },       // Triage tent
+    { x: 14, z: -82, type: 'ammo', elevateOnSurface: 0 },        // Sandbag checkpoint
 
-  // 11. Strategic Supply Item Spawns (Food, Water, Medkit, and Ammunition!)
-  const supplies: { pos: THREE.Vector3; type: ItemType }[] = [
-    // Police Station / Armory (Rich in Ammo & Medkits)
-    { pos: new THREE.Vector3(-24, 0.4, -28), type: 'ammo' },
-    { pos: new THREE.Vector3(-21, 0.4, -25), type: 'ammo' },
-    { pos: new THREE.Vector3(-26, 0.4, -27), type: 'medkit' },
+    // Sector 5: Industrial Warehouse Depot
+    { x: 126, z: 70, type: 'ammo', elevateOnSurface: 0 },
+    { x: 130, z: 72, type: 'ammo', elevateOnSurface: 0 },
+    { x: 124, z: 68, type: 'medkit', elevateOnSurface: 0 },
+    { x: 134, z: 68, type: 'food', elevateOnSurface: 0 },
 
-    // Gas Station / Workshop (Ammo in trunk + Water)
-    { pos: new THREE.Vector3(24, 0.4, 26), type: 'ammo' },
-    { pos: new THREE.Vector3(26, 0.4, 28), type: 'water' },
+    // Sector 6: Forest Ranger Cabin & Logging Trail
+    { x: -102.2, z: 22.2, type: 'ammo', elevateOnSurface: 0.9 }, // Cabin desk top
+    { x: -108, z: 23.5, type: 'food', elevateOnSurface: 0.8 },   // Cabin bunk bed
+    { x: -105, z: 26, type: 'water', elevateOnSurface: 0 },      // Cabin floor
+    { x: -85, z: 22, type: 'medkit', elevateOnSurface: 0 },      // Trail clearing
+    { x: -70, z: -15, type: 'food', elevateOnSurface: 0 },       // Forest grove
+    { x: -135, z: 20, type: 'ammo', elevateOnSurface: 0 },       // Mountain ridge
 
-    // Pharmacy / Market (Medkit + Food + Water)
-    { pos: new THREE.Vector3(24, 0.4, -28), type: 'medkit' },
-    { pos: new THREE.Vector3(26, 0.4, -26), type: 'food' },
-    { pos: new THREE.Vector3(21, 0.4, -29), type: 'water' },
-
-    // Ruined Suburban House (Food + Water + Ammo)
-    { pos: new THREE.Vector3(-24, 0.4, 28), type: 'food' },
-    { pos: new THREE.Vector3(-21, 0.4, 26), type: 'ammo' },
-    { pos: new THREE.Vector3(-26, 0.4, 30), type: 'water' },
-
-    // Abandoned Vehicles & Alleys
-    { pos: new THREE.Vector3(-16, 0.5, -4.5), type: 'ammo' },  // Police Cruiser trunk!
-    { pos: new THREE.Vector3(-2.5, 0.5, -17), type: 'water' },
-    { pos: new THREE.Vector3(3.2, 0.5, 16.5), type: 'food' },
-    { pos: new THREE.Vector3(-7.5, 0.4, -9), type: 'food' },
-    { pos: new THREE.Vector3(8.5, 0.4, 7), type: 'medkit' },
-    { pos: new THREE.Vector3(0, 0.4, -36), type: 'ammo' },
+    // Roadside abandoned vehicles
+    { x: -16, z: -5, type: 'ammo', elevateOnSurface: 0.8 },     // Police cruiser hood
+    { x: -2.5, z: -17.5, type: 'water', elevateOnSurface: 0.75 },// Sedan trunk
+    { x: 3.2, z: 16.5, type: 'food', elevateOnSurface: 0.8 },    // Pickup truck cargo bed
   ];
 
-  // 12. Zombie Patrol Spawn Positions
-  const zombies: THREE.Vector3[] = [
-    new THREE.Vector3(-12, 0, -22),
-    new THREE.Vector3(15, 0, -20),
-    new THREE.Vector3(-2, 0, -32),
-    new THREE.Vector3(-18, 0, 15),
-    new THREE.Vector3(16, 0, 22),
-    new THREE.Vector3(2, 0, 35),
-    new THREE.Vector3(-32, 0, -6),
-    new THREE.Vector3(30, 0, 10),
-    new THREE.Vector3(-25, 0, 24),
-    new THREE.Vector3(25, 0, -18),
+  // Ground, elevate, and validate each supply position
+  const supplies: { pos: THREE.Vector3; type: ItemType }[] = [];
+  rawSupplyCandidates.forEach((cand) => {
+    let px = cand.x;
+    let pz = cand.z;
+
+    // Validate: if candidate is inside a solid wall or obstacle collider, find nearest clear spot
+    if (isSupplyObstructed(px, pz, colliders)) {
+      let foundClear = false;
+      const searchRadii = [1.0, 1.8, 2.8, 3.8];
+      for (const r of searchRadii) {
+        if (foundClear) break;
+        for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+          const testX = cand.x + Math.cos(a) * r;
+          const testZ = cand.z + Math.sin(a) * r;
+          if (!isSupplyObstructed(testX, testZ, colliders)) {
+            px = testX;
+            pz = testZ;
+            foundClear = true;
+            break;
+          }
+        }
+      }
+      if (!foundClear) {
+        // Safe downtown open road fallback
+        px = 0;
+        pz = -6;
+      }
+    }
+
+    const surfaceY = getWorldSurfaceHeight(px, pz);
+    // True surface height plus exact prop elevation if on counter/table/desk
+    const finalY = surfaceY + (cand.elevateOnSurface || 0);
+
+    supplies.push({
+      pos: new THREE.Vector3(px, finalY, pz),
+      type: cand.type,
+    });
+  });
+
+  // 11. Zombie Patrol Spawns Across All 6 Open-World Districts
+  const rawZombieSpawns = [
+    // Downtown Core
+    { x: -12, z: -18 },
+    { x: 14, z: -16 },
+    { x: -16, z: 14 },
+    { x: 15, z: 18 },
+    // South Suburbia
+    { x: -20, z: 65 },
+    { x: 22, z: 70 },
+    { x: 0, z: 85 },
+    // East Highway & Gas Station
+    { x: 50, z: 5 },
+    { x: 82, z: 8 },
+    { x: 92, z: 20 },
+    // North Field Hospital
+    { x: -10, z: -75 },
+    { x: -22, z: -92 },
+    { x: 12, z: -85 },
+    // East Industrial Depot
+    { x: 120, z: 65 },
+    { x: 135, z: 80 },
+    // West Whispering Pines Forest
+    { x: -65, z: 5 },
+    { x: -85, z: 20 },
+    { x: -102, z: 35 },
+    { x: -120, z: -10 },
   ];
 
-  const player = new THREE.Vector3(0, 1.7, 0);
+  const zombies: THREE.Vector3[] = rawZombieSpawns.map((s) => {
+    const gy = getWorldSurfaceHeight(s.x, s.z);
+    return new THREE.Vector3(s.x, gy, s.z);
+  });
+
+  // Player Start Position (Grounded securely in Downtown Crossroad)
+  const startX = 0;
+  const startZ = 0;
+  const startY = getWorldSurfaceHeight(startX, startZ) + 1.7;
+  const player = new THREE.Vector3(startX, startY, startZ);
 
   return {
     sceneGroup,

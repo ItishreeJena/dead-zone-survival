@@ -26,6 +26,7 @@ export interface PlayerStats {
   inGameTime: string;   // e.g. "08:30 AM"
   dayNumber: number;    // e.g. 1
   isNight: boolean;
+  currentLocation?: string;
 }
 
 export type ItemType = 'food' | 'water' | 'medkit' | 'ammo' | 'scrap';

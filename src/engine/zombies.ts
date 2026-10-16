@@ -338,7 +338,8 @@ export class ZombieSystem {
     isFlashlightOn: boolean,
     isNight: boolean,
     colliders: BoxCollider[],
-    onPlayerDamage: (damage: number) => void
+    onPlayerDamage: (damage: number) => void,
+    getSurfaceHeight?: (x: number, z: number) => number
   ) {
     // Update blood particles
     for (let i = this.bloodParticles.length - 1; i >= 0; i--) {
@@ -533,6 +534,11 @@ export class ZombieSystem {
 
           if (canMoveX) z.position[0] = nextX;
           if (canMoveZ) z.position[2] = nextZ;
+
+          // Ground zombie firmly on dynamic terrain / platform surface
+          if (getSurfaceHeight) {
+            z.position[1] = getSurfaceHeight(z.position[0], z.position[2]);
+          }
         }
       }
 

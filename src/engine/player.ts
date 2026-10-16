@@ -439,7 +439,11 @@ export class PlayerController {
     this.stats.reserveAmmo += amount;
   }
 
-  public update(dt: number, colliders: BoxCollider[]) {
+  public update(
+    dt: number,
+    colliders: BoxCollider[],
+    getGroundHeight?: (x: number, z: number) => number
+  ) {
     // 1. Time Survived & Survival Vitals Simulation
     this.stats.timeSurvived += dt;
 
@@ -455,6 +459,23 @@ export class PlayerController {
     }
 
     sound.updateHeartbeat(this.stats.health);
+
+    // Dynamic Open-World District Detection
+    const px = this.position.x;
+    const pz = this.position.z;
+    if (px < -60) {
+      this.stats.currentLocation = 'WHISPERING PINES FOREST & CABIN';
+    } else if (pz < -55) {
+      this.stats.currentLocation = 'QUARANTINE FIELD HOSPITAL';
+    } else if (px > 55 && pz > 40) {
+      this.stats.currentLocation = 'INDUSTRIAL WAREHOUSE DEPOT';
+    } else if (px > 55) {
+      this.stats.currentLocation = 'HIGHWAY 40 GAS STATION';
+    } else if (pz > 45) {
+      this.stats.currentLocation = 'RIDGEWOOD SUBURBS';
+    } else {
+      this.stats.currentLocation = 'DOWNTOWN CROSSROADS';
+    }
 
     // 2. Reloading Progress
     if (this.stats.isReloading) {
@@ -527,12 +548,6 @@ export class PlayerController {
     let nextZ = this.position.z + this.velocity.z * dt;
     let nextY = this.position.y + this.velocity.y * dt;
 
-    if (nextY <= playerHeight) {
-      nextY = playerHeight;
-      this.velocity.y = 0;
-      this.isGrounded = true;
-    }
-
     for (const box of colliders) {
       if (
         nextX + playerRadius > box.minX &&
@@ -553,6 +568,20 @@ export class PlayerController {
         nextZ = this.position.z;
         this.velocity.z = 0;
       }
+    }
+
+    // Sample dynamic surface height at validated horizontal position
+    const groundY = getGroundHeight ? getGroundHeight(nextX, nextZ) : 0;
+    const playerEyeY = groundY + playerHeight;
+
+    if (nextY <= playerEyeY) {
+      nextY = playerEyeY;
+      this.velocity.y = 0;
+      this.isGrounded = true;
+    } else if (this.isGrounded && nextY - playerEyeY < 0.6) {
+      // Step smoothly with terrain contour & ramps while grounded
+      nextY = playerEyeY;
+      this.velocity.y = 0;
     }
 
     this.position.set(nextX, nextY, nextZ);
