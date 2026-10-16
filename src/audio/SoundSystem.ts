@@ -376,6 +376,10 @@ class SoundSystem {
     noise.stop(t + 0.1);
   }
 
+  public playZombieHit() {
+    this.playHitZombie();
+  }
+
   public updateListener(
     pos: { x: number; y: number; z: number },
     fwd: { x: number; y: number; z: number },
@@ -778,7 +782,277 @@ class SoundSystem {
     osc2.stop(t + 0.35);
   }
 
+  // --- VEHICLE AUDIO ENGINE ---
+  private engineOsc: OscillatorNode | null = null;
+  private engineSubOsc: OscillatorNode | null = null;
+  private engineFilter: BiquadFilterNode | null = null;
+  private engineGain: GainNode | null = null;
+  public isEngineRunning: boolean = false;
+
+  public startEngine() {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isEngineRunning) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      this.engineOsc = this.ctx.createOscillator();
+      this.engineSubOsc = this.ctx.createOscillator();
+      this.engineFilter = this.ctx.createBiquadFilter();
+      this.engineGain = this.ctx.createGain();
+
+      this.engineOsc.type = 'sawtooth';
+      this.engineOsc.frequency.setValueAtTime(38, t); // Low 4x4 V8 idle
+
+      this.engineSubOsc.type = 'triangle';
+      this.engineSubOsc.frequency.setValueAtTime(19, t);
+
+      this.engineFilter.type = 'lowpass';
+      this.engineFilter.frequency.setValueAtTime(160, t);
+      this.engineFilter.Q.setValueAtTime(3.5, t);
+
+      this.engineGain.gain.setValueAtTime(0.001, t);
+      this.engineGain.gain.exponentialRampToValueAtTime(0.35, t + 0.3);
+
+      this.engineOsc.connect(this.engineFilter);
+      this.engineSubOsc.connect(this.engineFilter);
+      this.engineFilter.connect(this.engineGain);
+      this.engineGain.connect(this.masterGain);
+
+      this.engineOsc.start(t);
+      this.engineSubOsc.start(t);
+      this.isEngineRunning = true;
+    } catch {
+      // AudioContext policy fallback
+    }
+  }
+
+  public updateEngine(speedRatio: number, isAccelerating: boolean) {
+    if (!this.ctx || !this.isEngineRunning || !this.engineOsc || !this.engineFilter || !this.engineGain) return;
+    const t = this.ctx.currentTime;
+    const clampedSpeed = Math.min(1.0, Math.max(0, Math.abs(speedRatio)));
+
+    // Frequency shifts up with speed and throttle acceleration
+    const baseFreq = 38 + clampedSpeed * 75 + (isAccelerating ? 18 : 0);
+    this.engineOsc.frequency.setTargetAtTime(baseFreq, t, 0.08);
+    if (this.engineSubOsc) {
+      this.engineSubOsc.frequency.setTargetAtTime(baseFreq * 0.5, t, 0.08);
+    }
+
+    const cutoff = 160 + clampedSpeed * 450 + (isAccelerating ? 150 : 0);
+    this.engineFilter.frequency.setTargetAtTime(cutoff, t, 0.08);
+
+    const gainVal = this.isMuted ? 0 : 0.28 + clampedSpeed * 0.22 + (isAccelerating ? 0.08 : 0);
+    this.engineGain.gain.setTargetAtTime(gainVal, t, 0.08);
+  }
+
+  public stopEngine() {
+    if (!this.ctx || !this.isEngineRunning || !this.engineGain) return;
+    const t = this.ctx.currentTime;
+    this.engineGain.gain.setTargetAtTime(0.001, t, 0.15);
+
+    setTimeout(() => {
+      try {
+        if (this.engineOsc) {
+          this.engineOsc.stop();
+          this.engineOsc.disconnect();
+          this.engineOsc = null;
+        }
+        if (this.engineSubOsc) {
+          this.engineSubOsc.stop();
+          this.engineSubOsc.disconnect();
+          this.engineSubOsc = null;
+        }
+        this.engineGain = null;
+        this.engineFilter = null;
+        this.isEngineRunning = false;
+      } catch {
+        this.isEngineRunning = false;
+      }
+    }, 200);
+  }
+
+  public playBrakeScreech() {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(1400, t);
+    osc.frequency.exponentialRampToValueAtTime(700, t + 0.35);
+
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1200, t);
+    filter.Q.setValueAtTime(6.0, t);
+
+    gain.gain.setValueAtTime(0.12, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+
+    osc.start(t);
+    osc.stop(t + 0.36);
+  }
+
+  public playVehicleImpact(force: number = 0.5) {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const t = this.ctx.currentTime;
+
+    // Heavy metallic crash thump
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(120, t);
+    osc.frequency.exponentialRampToValueAtTime(30, t + 0.28);
+
+    const impactVol = Math.min(0.6, 0.2 + force * 0.4);
+    gain.gain.setValueAtTime(impactVol, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(t);
+    osc.stop(t + 0.32);
+  }
+
+  public playRefuel() {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const t = this.ctx.currentTime;
+
+    // Liquid bubbling glugs
+    for (let i = 0; i < 4; i++) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(320 + i * 40, t + i * 0.12);
+      osc.frequency.exponentialRampToValueAtTime(540 + i * 50, t + i * 0.12 + 0.1);
+
+      gain.gain.setValueAtTime(0.2, t + i * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.1);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      osc.start(t + i * 0.12);
+      osc.stop(t + i * 0.12 + 0.11);
+    }
+  }
+
+  public playSleepSequence() {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const t = this.ctx.currentTime;
+
+    // Soft descending lullaby chime
+    const notes = [523.25, 440, 349.23, 261.63]; // C5, A4, F4, C4
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t + idx * 0.18);
+
+      gain.gain.setValueAtTime(0.22, t + idx * 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + idx * 0.18 + 0.45);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain!);
+      osc.start(t + idx * 0.18);
+      osc.stop(t + idx * 0.18 + 0.46);
+    });
+  }
+
+  public playWakeUp() {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const t = this.ctx.currentTime;
+
+    // Bright ascending morning sunrise chord
+    const notes = [261.63, 329.63, 392.0, 523.25]; // C major
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t + idx * 0.14);
+
+      gain.gain.setValueAtTime(0.25, t + idx * 0.14);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + idx * 0.14 + 0.6);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain!);
+      osc.start(t + idx * 0.14);
+      osc.stop(t + idx * 0.14 + 0.62);
+    });
+  }
+
+  public playMapToggle(open: boolean) {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(open ? 440 : 880, t);
+    osc.frequency.exponentialRampToValueAtTime(open ? 880 : 440, t + 0.08);
+
+    gain.gain.setValueAtTime(0.18, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(t);
+    osc.stop(t + 0.1);
+  }
+
+  public playSafehouseStash() {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const t = this.ctx.currentTime;
+
+    // Heavy steel latch click
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(180, t);
+    osc.frequency.exponentialRampToValueAtTime(60, t + 0.12);
+
+    gain.gain.setValueAtTime(0.25, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(t);
+    osc.stop(t + 0.15);
+  }
+
+  public playThreatAlert() {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+    const t = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(660, t);
+    osc.frequency.setValueAtTime(440, t + 0.12);
+    osc.frequency.setValueAtTime(660, t + 0.24);
+
+    gain.gain.setValueAtTime(0.3, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+
+    osc.connect(gain);
+    gain.connect(this.masterGain);
+    osc.start(t);
+    osc.stop(t + 0.4);
+  }
+
   public dispose() {
+    this.stopEngine();
     if (this.heartbeatInterval) {
       window.clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;

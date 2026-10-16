@@ -31,6 +31,12 @@ const ROAD_MASKS: RoadMask[] = [
   { x1: -25, z1: -85, x2: 25, z2: -85, width: 10 },
   // Industrial Depot Highway Spur
   { x1: 75, z1: 0, x2: 130, z2: 80, width: 10 },
+  // North-West Boulevard connecting Downtown to Ruined City & Motel Safehouse
+  { x1: 0, z1: -30, x2: -80, z2: -75, width: 11 },
+  // Ruined City North-South Avenue
+  { x1: -80, z1: -45, x2: -80, z2: -115, width: 11 },
+  // Ruined City Cross Street
+  { x1: -115, z1: -75, x2: -45, z2: -75, width: 10 },
 ];
 
 // District Flat Zones (building footprints where ground is leveled)
@@ -54,6 +60,8 @@ const FLAT_ZONES: FlatZone[] = [
   { cx: 125, cz: 75, radius: 45, baseHeight: 0.2 },
   // Forest Ranger Cabin
   { cx: -105, cz: 25, radius: 24, baseHeight: 2.2 },
+  // New Haven Ruined City & Motel Safehouse
+  { cx: -80, cz: -75, radius: 46, baseHeight: 0.2 },
 ];
 
 /**
@@ -226,6 +234,10 @@ export function getWorldSurfaceHeight(x: number, z: number): number {
   }
   // Warehouse Depot (128, 72)
   if (x >= 116 && x <= 140 && z >= 62 && z <= 82) {
+    return terrainY + 0.15;
+  }
+  // New Haven City Motel & Safehouse (-85, -72)
+  if (x >= -98 && x <= -62 && z >= -85 && z <= -60) {
     return terrainY + 0.15;
   }
 

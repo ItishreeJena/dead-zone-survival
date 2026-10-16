@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { GameStatus, PlayerStats, SupplyItem } from '../types/game';
+import { GameStatus, PlayerStats, SupplyItem, ShelterBed, SafehouseStash, MapWaypoint } from '../types/game';
 import { buildPostApocalypticTown, WorldBuildResult } from './world';
 import { getWorldSurfaceHeight } from './terrain';
 import { PlayerController } from './player';
 import { ZombieSystem } from './zombies';
 import { SupplySystem } from './supplies';
+import { VehicleController } from './vehicle';
 import { sound } from '../audio/SoundSystem';
 
 export interface GameEngineCallbacks {
@@ -13,6 +14,8 @@ export interface GameEngineCallbacks {
   onStatusChange: (status: GameStatus) => void;
   onInteractPrompt: (prompt: string | null) => void;
   onDamageEffect: () => void;
+  onToggleMap?: () => void;
+  onOpenStash?: (stash: SafehouseStash) => void;
 }
 
 // Pre-allocated math helper for zero GC audio listener updates
@@ -30,10 +33,22 @@ export class GameEngine {
   private clock: THREE.Clock = new THREE.Clock();
 
   // Subsystems
-  private worldData: WorldBuildResult;
+  public worldData: WorldBuildResult;
   public player: PlayerController;
   public zombies: ZombieSystem;
   public supplies: SupplySystem;
+  public vehicle: VehicleController;
+
+  // Driving & Exploration State
+  public isDriving: boolean = false;
+  public stash: SafehouseStash = { food: 4, water: 5, medkit: 3, ammo: 48 };
+  public waypoint: MapWaypoint | null = null;
+  private nearbyBed: ShelterBed | null = null;
+  private isNearStash: boolean = false;
+  private isNearFuel: boolean = false;
+  private isNearVehicle: boolean = false;
+  private isSleepingTransition: boolean = false;
+  private warningTimer: number = 0;
 
   // Atmosphere, Celestial Bodies & Lighting
   private sunLight: THREE.DirectionalLight;
@@ -140,6 +155,13 @@ export class GameEngine {
     // 9. Supply Subsystem
     this.supplies = new SupplySystem(this.scene, this.worldData.spawnPoints.supplies);
 
+    // 10. Drivable 4x4 Off-Road Truck Subsystem
+    this.vehicle = new VehicleController(
+      this.worldData.vehicleSpawn.pos,
+      this.worldData.vehicleSpawn.rotationY
+    );
+    this.scene.add(this.vehicle.mesh);
+
     // Pre-warm shaders
     this.renderer.compile(this.scene, this.camera);
 
@@ -188,9 +210,53 @@ export class GameEngine {
       }
     };
 
-    // 4. Interaction Key (E)
+    // 4. Map Toggle Key (M)
+    this.player.onToggleMap = () => {
+      if (this.callbacks.onToggleMap) {
+        this.callbacks.onToggleMap();
+      }
+    };
+
+    // 5. Interaction Key (E)
     this.player.onInteract = () => {
-      if (this.nearbyItem && this.status === 'playing') {
+      if (this.status !== 'playing') return;
+
+      if (this.isDriving) {
+        // Exit Vehicle
+        this.exitVehicle();
+        return;
+      }
+
+      if (this.isNearVehicle) {
+        // Enter 4x4 Truck
+        this.enterVehicle();
+        return;
+      }
+
+      if (this.nearbyBed) {
+        // Rest in Shelter Bed
+        this.attemptSleep(this.nearbyBed);
+        return;
+      }
+
+      if (this.isNearStash) {
+        // Open Safehouse Stash Footlocker
+        this.openStash();
+        return;
+      }
+
+      const distToVeh = Math.hypot(
+        this.player.position.x - this.vehicle.state.position[0],
+        this.player.position.z - this.vehicle.state.position[2]
+      );
+      if (this.isNearFuel && distToVeh < 12 && this.vehicle.state.fuel < 98) {
+        // Refuel Vehicle
+        this.refuelVehicle();
+        return;
+      }
+
+      if (this.nearbyItem) {
+        // Collect Field Supply
         const item = this.supplies.collectItem(this.nearbyItem.id);
         if (item) {
           sound.playPickup(item.type);
@@ -207,7 +273,7 @@ export class GameEngine {
       }
     };
 
-    // 5. Pause Toggle (ESC)
+    // 6. Pause Toggle (ESC)
     this.player.onTogglePause = () => {
       if (this.status === 'playing') {
         this.pauseGame();
@@ -339,9 +405,121 @@ export class GameEngine {
     this.callbacks.onStatusChange('playing');
   }
 
+  public enterVehicle() {
+    if (this.isDriving || this.vehicle.state.health <= 0) return;
+    this.isDriving = true;
+    this.vehicle.enter();
+    this.player.setDriving(true);
+    this.player.stats.isDriving = true;
+    this.player.stats.vehicleState = this.vehicle.state;
+  }
+
+  public exitVehicle() {
+    if (!this.isDriving) return;
+    this.isDriving = false;
+    this.vehicle.exit();
+    this.player.setDriving(false);
+    const exitPos = this.vehicle.getExitPosition(getWorldSurfaceHeight);
+    this.player.setPosition(exitPos);
+    this.player.stats.isDriving = false;
+    this.callbacks.onInteractPrompt(null);
+  }
+
+  public refuelVehicle() {
+    this.vehicle.refuel(100);
+    this.player.stats.warningMessage = 'TRUCK FUEL TANK 100% REFUELED';
+    this.warningTimer = 3.0;
+  }
+
+  public openStash() {
+    if (this.callbacks.onOpenStash) {
+      this.player.unlockPointer();
+      this.callbacks.onOpenStash(this.stash);
+    }
+  }
+
+  public updateStash(newStash: SafehouseStash, updatedStats: Partial<PlayerStats>) {
+    this.stash = { ...newStash };
+    Object.assign(this.player.stats, updatedStats);
+  }
+
+  public setWaypoint(wp: MapWaypoint | null) {
+    this.waypoint = wp;
+    this.player.stats.waypoint = wp;
+  }
+
+  public attemptSleep(bed: ShelterBed) {
+    if (this.isSleepingTransition) return;
+
+    // Safety check: Are there hostile zombies nearby?
+    const ppos = this.player.position;
+    let threatFound = false;
+    let threatDist = 999;
+    for (const z of this.zombies.zombies) {
+      if (z.state === 'dead') continue;
+      const dx = z.position[0] - ppos.x;
+      const dz = z.position[2] - ppos.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < 22 || (dist < 36 && (z.state === 'chase' || z.state === 'attack'))) {
+        threatFound = true;
+        threatDist = Math.round(dist);
+        break;
+      }
+    }
+
+    if (threatFound) {
+      sound.playThreatAlert();
+      this.player.stats.warningMessage = `CANNOT SLEEP! UNDEAD NEARBY (${threatDist}m)`;
+      this.warningTimer = 3.5;
+      return;
+    }
+
+    // Safe Sleep Transition
+    this.isSleepingTransition = true;
+    this.player.stats.isSleeping = true;
+    sound.playSleepSequence();
+
+    setTimeout(() => {
+      // Advance clock to morning sunrise (06:30 AM)
+      if (this.timeOfDay >= 6.5) {
+        this.dayNumber += 1;
+      }
+      this.timeOfDay = 6.5;
+
+      // Restore vitals and advance hunger/thirst
+      this.player.restoreHealth(35);
+      this.player.stats.stamina = 100;
+      this.player.stats.hunger = Math.max(10, this.player.stats.hunger - 14);
+      this.player.stats.thirst = Math.max(10, this.player.stats.thirst - 18);
+
+      sound.playWakeUp();
+      this.player.stats.isSleeping = false;
+      this.isSleepingTransition = false;
+      this.player.stats.warningMessage = `RESTED IN ${bed.name.toUpperCase()} · DAY ${this.dayNumber}`;
+      this.warningTimer = 4.0;
+    }, 1500);
+  }
+
   public restartGame() {
     this.timeOfDay = 7.5;
     this.dayNumber = 1;
+    this.isDriving = false;
+    this.vehicle.exit();
+    this.vehicle.state.position = [
+      this.worldData.vehicleSpawn.pos.x,
+      this.worldData.vehicleSpawn.pos.y,
+      this.worldData.vehicleSpawn.pos.z,
+    ];
+    this.vehicle.state.rotationY = this.worldData.vehicleSpawn.rotationY;
+    this.vehicle.state.speed = 0;
+    this.vehicle.state.health = 100;
+    this.vehicle.state.fuel = 75;
+    this.vehicle.mesh.position.copy(this.worldData.vehicleSpawn.pos);
+    this.vehicle.mesh.rotation.set(0, this.worldData.vehicleSpawn.rotationY, 0);
+
+    this.stash = { food: 4, water: 5, medkit: 3, ammo: 48 };
+    this.waypoint = null;
+
     this.player.reset(this.worldData.spawnPoints.player);
     this.zombies.reset(this.worldData.spawnPoints.zombies);
     this.supplies.reset(this.worldData.spawnPoints.supplies);
@@ -403,14 +581,140 @@ export class GameEngine {
       // 1. Advance Day/Night Cycle
       this.updateDayNightCycle(dt);
 
-      // 2. Update Player Physics, Controls & Terrain Grounding
-      this.player.update(dt, this.worldData.colliders, getWorldSurfaceHeight);
+      // Warning message timer decay
+      if (this.warningTimer > 0) {
+        this.warningTimer -= dt;
+        if (this.warningTimer <= 0) {
+          this.player.stats.warningMessage = null;
+        }
+      }
 
-      // 3. Update 3D Spatial Audio Listener with camera position & orientation
+      // 2. Physics & Controls: Driving vs On-Foot
+      if (this.isDriving) {
+        // Update 4x4 Truck Physics, Steering & Terrain Alignment
+        this.vehicle.update(
+          dt,
+          this.player.keys,
+          this.worldData.colliders,
+          getWorldSurfaceHeight,
+          this.zombies.zombies,
+          () => {
+            this.cameraShakeIntensity = 0.08;
+            this.player.stats.zombiesKilled += 1;
+            this.player.stats.score += 200;
+          },
+          () => {
+            this.cameraShakeIntensity = 0.14;
+          }
+        );
+
+        // Player world position tracks the vehicle
+        this.player.position.set(
+          this.vehicle.state.position[0],
+          this.vehicle.state.position[1] + 0.8,
+          this.vehicle.state.position[2]
+        );
+
+        // Smooth Third-Person Driving Chase Camera
+        const rot = this.vehicle.state.rotationY;
+        const camDist = 6.2;
+        const camH = 2.6;
+        const targetCamX = this.vehicle.state.position[0] - Math.sin(rot) * camDist;
+        const targetCamZ = this.vehicle.state.position[2] - Math.cos(rot) * camDist;
+        const targetCamY = getWorldSurfaceHeight(targetCamX, targetCamZ) + camH;
+
+        this.camera.position.x += (targetCamX - this.camera.position.x) * 0.14;
+        this.camera.position.z += (targetCamZ - this.camera.position.z) * 0.14;
+        this.camera.position.y += (targetCamY - this.camera.position.y) * 0.14;
+
+        const targetLook = new THREE.Vector3(
+          this.vehicle.state.position[0] + Math.sin(rot) * 4.0,
+          this.vehicle.state.position[1] + 1.2,
+          this.vehicle.state.position[2] + Math.cos(rot) * 4.0
+        );
+        this.camera.lookAt(targetLook);
+
+        // Fuel pump check while driving
+        const distToFuel = Math.hypot(
+          this.vehicle.state.position[0] - this.worldData.fuelLocation.x,
+          this.vehicle.state.position[2] - this.worldData.fuelLocation.z
+        );
+
+        if (distToFuel < 8.0 && this.vehicle.state.fuel < 98) {
+          this.callbacks.onInteractPrompt('[F] REFUEL 4x4 TRUCK · [E] EXIT TRUCK');
+          if (this.player.keys['KeyF']) {
+            this.refuelVehicle();
+          }
+        } else {
+          this.callbacks.onInteractPrompt('[E] EXIT VEHICLE · WASD DRIVE · SPACE BRAKE');
+        }
+
+        // Stats update for vehicle
+        this.player.stats.isDriving = true;
+        this.player.stats.vehicleState = { ...this.vehicle.state };
+      } else {
+        // Player Walking / Sprinting Physics & Collision
+        this.player.update(dt, this.worldData.colliders, getWorldSurfaceHeight);
+        this.player.stats.isDriving = false;
+        this.player.stats.vehicleState = { ...this.vehicle.state };
+
+        // Interaction Proximity Checks
+        const distToVeh = Math.hypot(
+          this.player.position.x - this.vehicle.state.position[0],
+          this.player.position.z - this.vehicle.state.position[2]
+        );
+        this.isNearVehicle = distToVeh < 3.2;
+
+        let closestBed: ShelterBed | null = null;
+        let minBedDist = 999;
+        for (const bed of this.worldData.shelters) {
+          const d = Math.hypot(
+            this.player.position.x - bed.position[0],
+            this.player.position.z - bed.position[2]
+          );
+          if (d < 2.5 && d < minBedDist) {
+            minBedDist = d;
+            closestBed = bed;
+          }
+        }
+        this.nearbyBed = closestBed;
+
+        const distToStash = Math.hypot(
+          this.player.position.x - this.worldData.stashLocation.x,
+          this.player.position.z - this.worldData.stashLocation.z
+        );
+        this.isNearStash = distToStash < 2.4;
+
+        const distToFuel = Math.hypot(
+          this.player.position.x - this.worldData.fuelLocation.x,
+          this.player.position.z - this.worldData.fuelLocation.z
+        );
+        this.isNearFuel = distToFuel < 4.0;
+
+        const nearSupply = this.supplies.getNearbyItem(this.player.position);
+        this.nearbyItem = nearSupply;
+
+        // Interactive Prompt Display Priority
+        if (this.isNearVehicle) {
+          this.callbacks.onInteractPrompt('[E] DRIVE 4x4 PICKUP TRUCK');
+        } else if (this.nearbyBed) {
+          this.callbacks.onInteractPrompt(`[E] SLEEP IN BED (${this.nearbyBed.name.toUpperCase()})`);
+        } else if (this.isNearStash) {
+          this.callbacks.onInteractPrompt('[E] OPEN SAFEHOUSE STASH');
+        } else if (this.isNearFuel && distToVeh < 12.0 && this.vehicle.state.fuel < 98) {
+          this.callbacks.onInteractPrompt('[E] REFUEL 4x4 TRUCK AT PUMP');
+        } else if (nearSupply) {
+          this.callbacks.onInteractPrompt(`[E] TAKE ${nearSupply.name.toUpperCase()}`);
+        } else {
+          this.callbacks.onInteractPrompt(null);
+        }
+      }
+
+      // 3. Update 3D Spatial Audio Listener
       this.camera.getWorldDirection(_listenerFwd);
       sound.updateListener(this.camera.position, _listenerFwd, this.camera.up);
 
-      // 4. Update Zombies with Sensory AI, Line of Sight, and Dynamic Terrain Grounding
+      // 4. Update Zombies with Sensory AI and Terrain Grounding
       this.zombies.update(
         dt,
         this.player.position,
@@ -419,7 +723,9 @@ export class GameEngine {
         this.isNight,
         this.worldData.colliders,
         (damage) => {
-          this.player.takeDamage(damage);
+          // If inside armored vehicle, player takes 75% reduced damage
+          const actualDamage = this.isDriving ? damage * 0.25 : damage;
+          this.player.takeDamage(actualDamage);
           this.cameraShakeIntensity = 0.08;
           this.callbacks.onDamageEffect();
 
@@ -438,27 +744,19 @@ export class GameEngine {
         this.callbacks.onStatusChange('gameover');
       }
 
-      // 4. Update Collectible Supplies
+      // 5. Update Field Supplies
       this.supplies.update(dt, totalTime);
 
-      const near = this.supplies.getNearbyItem(this.player.position);
-      if (near !== this.nearbyItem) {
-        this.nearbyItem = near;
-        if (near) {
-          this.callbacks.onInteractPrompt(`[E] TAKE ${near.name.toUpperCase()}`);
-        } else {
-          this.callbacks.onInteractPrompt(null);
-        }
-      }
-
-      // 5. Camera Shake Decay
+      // 6. Camera Shake Decay
       if (this.cameraShakeIntensity > 0) {
         this.camera.position.x += (Math.random() - 0.5) * this.cameraShakeIntensity;
         this.camera.position.y += (Math.random() - 0.5) * this.cameraShakeIntensity;
         this.cameraShakeIntensity = Math.max(0, this.cameraShakeIntensity - dt * 0.35);
       }
 
-      // 6. Emit Stats to React HUD
+      // 7. Emit Stats to React HUD
+      this.player.stats.stashItems = this.stash;
+      this.player.stats.waypoint = this.waypoint;
       this.callbacks.onStatsUpdate({ ...this.player.stats });
     }
 
@@ -470,6 +768,7 @@ export class GameEngine {
       cancelAnimationFrame(this.animationFrameId);
     }
     window.removeEventListener('resize', this.handleResize);
+    this.vehicle.dispose();
     this.player.dispose();
     this.zombies.dispose();
     this.supplies.dispose();

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BoxCollider, ItemType } from '../types/game';
+import { BoxCollider, ItemType, ShelterBed } from '../types/game';
 import { getTerrainHeight, getWorldSurfaceHeight, createOpenWorldTerrainMesh } from './terrain';
 import {
   createAsphaltTexture,
@@ -15,6 +15,10 @@ export interface WorldBuildResult {
   colliders: BoxCollider[];
   streetlights: THREE.PointLight[];
   windObjects: THREE.Object3D[];
+  shelters: ShelterBed[];
+  stashLocation: THREE.Vector3;
+  vehicleSpawn: { pos: THREE.Vector3; rotationY: number };
+  fuelLocation: THREE.Vector3;
   spawnPoints: {
     player: THREE.Vector3;
     supplies: { pos: THREE.Vector3; type: ItemType }[];
@@ -150,6 +154,12 @@ export function buildPostApocalypticTown(): WorldBuildResult {
   createPavedRoadSegment(-30, -90, 30, -90, 9);
   // E. East Warehouse Industrial Spur
   createPavedRoadSegment(65, 0, 125, 70, 9);
+  // F. North-West Boulevard connecting Downtown to Ruined City
+  createPavedRoadSegment(0, -30, -80, -75, 11);
+  // G. Ruined City North-South Avenue
+  createPavedRoadSegment(-80, -45, -80, -115, 11);
+  // H. Ruined City Cross Street
+  createPavedRoadSegment(-115, -75, -45, -75, 10);
 
   // Sidewalks in Downtown Core
   function createSidewalk(x: number, z: number, w: number, l: number) {
@@ -995,6 +1005,270 @@ export function buildPostApocalypticTown(): WorldBuildResult {
   createRoadSign(62, -6.5, Math.PI);
   createRoadSign(-60, 6.5, 0);
   createRoadSign(-6.8, -60, Math.PI / 2);
+  createRoadSign(-35, -45, -Math.PI / 4);
+
+  // -------------------------------------------------------------
+  // SECTOR 7: NEW HAVEN RUINED CITY QUARTER & MOTEL SAFEHOUSE
+  // (North-West: X: -60 to -115, Z: -50 to -105)
+  // -------------------------------------------------------------
+  // A. Ruined High-Rise Skyscraper Skeleton (26m tall landmark)
+  function createRuinedSkyscraper(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const ssGroup = new THREE.Group();
+    ssGroup.position.set(cx, gy, cz);
+
+    const w = 18;
+    const d = 18;
+    const floorH = 4.2;
+    const numFloors = 6;
+    const totalH = floorH * numFloors;
+
+    // Concrete elevator/stairwell central core
+    const core = new THREE.Mesh(new THREE.BoxGeometry(6, totalH, 6), concreteMat);
+    core.position.set(0, totalH / 2, 0);
+    core.castShadow = true;
+    ssGroup.add(core);
+    colliders.push({ minX: cx - 3.2, maxX: cx + 3.2, minZ: cz - 3.2, maxZ: cz + 3.2 });
+
+    // Steel column frame grid
+    for (const px of [-w / 2 + 0.5, 0, w / 2 - 0.5]) {
+      for (const pz of [-d / 2 + 0.5, 0, d / 2 - 0.5]) {
+        if (px === 0 && pz === 0) continue;
+        const col = new THREE.Mesh(new THREE.BoxGeometry(0.5, totalH, 0.5), darkMetalMat);
+        col.position.set(px, totalH / 2, pz);
+        col.castShadow = true;
+        ssGroup.add(col);
+        colliders.push({ minX: cx + px - 0.4, maxX: cx + px + 0.4, minZ: cz + pz - 0.4, maxZ: cz + pz + 0.4 });
+      }
+    }
+
+    // Fractured floor slabs with collapsed sections
+    for (let f = 1; f <= numFloors; f++) {
+      const fy = f * floorH;
+      const slabW = f > 4 ? w * 0.7 : w;
+      const slabD = f > 3 ? d * 0.65 : d;
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(slabW, 0.35, slabD), concreteMat);
+      slab.position.set((f % 2 === 0 ? -1 : 1) * 1.5, fy, (f % 2 === 0 ? 1 : -1) * 1.5);
+      slab.receiveShadow = true;
+      ssGroup.add(slab);
+    }
+
+    // Ground rubble piles around skyscraper base
+    for (const rx of [-8, 8]) {
+      const rubble = new THREE.Mesh(new THREE.DodecahedronGeometry(2.0, 1), concreteMat);
+      rubble.position.set(rx, 1.0, 6);
+      ssGroup.add(rubble);
+      colliders.push({ minX: cx + rx - 1.8, maxX: cx + rx + 1.8, minZ: cz + 4.2, maxZ: cz + 7.8 });
+    }
+
+    sceneGroup.add(ssGroup);
+  }
+
+  createRuinedSkyscraper(-95, -90);
+
+  // B. 2-Story Abandoned City Motel & Reinforced Safehouse
+  function createCityMotelSafehouse(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const mGroup = new THREE.Group();
+    mGroup.position.set(cx, gy, cz);
+
+    const w = 24;
+    const h = 7.0;
+    const d = 15;
+    const wallThick = 0.45;
+
+    // Ground Floor Slab
+    const groundFloor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), concreteMat);
+    groundFloor.position.set(0, 0.15, 0);
+    groundFloor.receiveShadow = true;
+    mGroup.add(groundFloor);
+
+    // Second Floor Slab & Exterior Balcony Walkway
+    const secondFloor = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), concreteMat);
+    secondFloor.position.set(0, 3.5, 0);
+    mGroup.add(secondFloor);
+
+    // Flat Roof with Overhang
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w + 1.2, 0.35, d + 1.2), darkMetalMat);
+    roof.position.set(0, h + 0.175, 0);
+    mGroup.add(roof);
+
+    // Front Neon Motel Signboard ("OAKHAVEN MOTEL // SAFEHOUSE")
+    const signBoard = new THREE.Mesh(new THREE.BoxGeometry(7.5, 1.4, 0.15), darkMetalMat);
+    signBoard.position.set(0, h + 1.0, d / 2 + 0.2);
+    mGroup.add(signBoard);
+
+    const signText = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.9, 0.08), hazardMat);
+    signText.position.set(0, h + 1.0, d / 2 + 0.3);
+    mGroup.add(signText);
+
+    const signLight = new THREE.PointLight(0xf59e0b, 1.5, 18, 1.8);
+    signLight.position.set(0, h + 1.0, d / 2 + 1.5);
+    mGroup.add(signLight);
+
+    // Back & Outer Side Walls
+    const backWall = new THREE.Mesh(new THREE.BoxGeometry(w, h, wallThick), brickMat);
+    backWall.position.set(0, h / 2, -d / 2);
+    mGroup.add(backWall);
+
+    const leftWall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), brickMat);
+    leftWall.position.set(-w / 2, h / 2, 0);
+    mGroup.add(leftWall);
+
+    const rightWall = new THREE.Mesh(new THREE.BoxGeometry(wallThick, h, d), brickMat);
+    rightWall.position.set(w / 2, h / 2, 0);
+    mGroup.add(rightWall);
+
+    // Interior Partition separating Reinforced Safehouse (left side) from Motel Lobby (right side)
+    const partition = new THREE.Mesh(new THREE.BoxGeometry(wallThick, 3.4, d), brickMat);
+    partition.position.set(0, 1.7, 0);
+    mGroup.add(partition);
+
+    // Front Wall for Ground Floor Safehouse (Room 101, Left: x = -w/2 to 0)
+    // Safehouse has reinforced double entrance door (doorW: 2.2 at x = -5.5)
+    const shDoorW = 2.2;
+    const shFrontL = new THREE.Mesh(new THREE.BoxGeometry(4.4, 3.4, wallThick), concreteMat);
+    shFrontL.position.set(-w / 2 + 2.2, 1.7, d / 2);
+    mGroup.add(shFrontL);
+
+    const shFrontR = new THREE.Mesh(new THREE.BoxGeometry(4.4, 3.4, wallThick), concreteMat);
+    shFrontR.position.set(-2.2, 1.7, d / 2);
+    mGroup.add(shFrontR);
+
+    const shLintel = new THREE.Mesh(new THREE.BoxGeometry(shDoorW, 0.8, wallThick), concreteMat);
+    shLintel.position.set(-6.0, 3.0, d / 2);
+    mGroup.add(shLintel);
+
+    // Front Wall for Motel Lobby (Right: x = 0 to w/2) with wide open entrance (doorW: 3.0 at x = 6.0)
+    const lobbyFrontL = new THREE.Mesh(new THREE.BoxGeometry(4.0, 3.4, wallThick), brickMat);
+    lobbyFrontL.position.set(2.0, 1.7, d / 2);
+    mGroup.add(lobbyFrontL);
+
+    const lobbyFrontR = new THREE.Mesh(new THREE.BoxGeometry(4.0, 3.4, wallThick), brickMat);
+    lobbyFrontR.position.set(10.0, 1.7, d / 2);
+    mGroup.add(lobbyFrontR);
+
+    // SAFEHOUSE INTERIOR FURNITURE (The Usable Shelter & Stash)
+    // 1. Reinforced Safehouse Bunk Bed (Usable sleeping spot at x = -85, z = -74)
+    const bunkGroup = new THREE.Group();
+    bunkGroup.position.set(-5.0, 0, -4.0);
+    const bunkFrame = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.85, 2.5), darkMetalMat);
+    bunkFrame.position.y = 0.425;
+    bunkGroup.add(bunkFrame);
+    const mattress = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.22, 2.4), new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 }));
+    mattress.position.y = 0.95;
+    bunkGroup.add(mattress);
+    mGroup.add(bunkGroup);
+
+    // 2. Safehouse Supply Stash Locker (Supply storage chest at x = -82, z = -72)
+    const stashLocker = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 0.8), darkMetalMat);
+    stashLocker.position.set(-2.0, 0.6, -2.0);
+    mGroup.add(stashLocker);
+
+    const stashLatch = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.35, 0.1), hazardMat);
+    stashLatch.position.set(-2.0, 0.65, -1.55);
+    mGroup.add(stashLatch);
+
+    // Safehouse workbench & emergency lantern
+    const bench = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.9, 0.85), woodMat);
+    bench.position.set(-8.5, 0.45, 0);
+    mGroup.add(bench);
+
+    const safeLantern = new THREE.PointLight(0xffbe6b, 1.2, 14, 1.8);
+    safeLantern.position.set(-5.0, 2.6, 0);
+    mGroup.add(safeLantern);
+
+    // Motel Lobby Reception Desk on right
+    const desk = new THREE.Mesh(new THREE.BoxGeometry(3.5, 1.1, 0.9), woodMat);
+    desk.position.set(6.0, 0.55, 1.5);
+    mGroup.add(desk);
+
+    sceneGroup.add(mGroup);
+
+    // Colliders leaving Safehouse entrance and Lobby entrance wide open
+    // Outer walls
+    colliders.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2 - 0.25, maxZ: cz - d / 2 + 0.25 });
+    colliders.push({ minX: cx - w / 2 - 0.25, maxX: cx - w / 2 + 0.25, minZ: cz - d / 2, maxZ: cz + d / 2 });
+    colliders.push({ minX: cx + w / 2 - 0.25, maxX: cx + w / 2 + 0.25, minZ: cz - d / 2, maxZ: cz + d / 2 });
+    // Middle partition
+    colliders.push({ minX: cx - 0.25, maxX: cx + 0.25, minZ: cz - d / 2, maxZ: cz + d / 2 - 2.5 });
+    // Safehouse front walls leaving door open between x = -7.1 and -4.9
+    colliders.push({ minX: cx - w / 2, maxX: cx - 7.1, minZ: cz + d / 2 - 0.25, maxZ: cz + d / 2 + 0.25 });
+    colliders.push({ minX: cx - 4.9, maxX: cx - 0.2, minZ: cz + d / 2 - 0.25, maxZ: cz + d / 2 + 0.25 });
+    // Lobby front walls
+    colliders.push({ minX: cx + 0.2, maxX: cx + 4.5, minZ: cz + d / 2 - 0.25, maxZ: cz + d / 2 + 0.25 });
+    colliders.push({ minX: cx + 7.5, maxX: cx + w / 2, minZ: cz + d / 2 - 0.25, maxZ: cz + d / 2 + 0.25 });
+    // Stash & furniture colliders
+    colliders.push({ minX: cx - 2.7, maxX: cx - 1.3, minZ: cz - 2.5, maxZ: cz - 1.5 });
+  }
+
+  createCityMotelSafehouse(-80, -70);
+
+  // C. Collapsed City Highway Overpass (iconic drivable/walkable ruined incline ramp)
+  function createCollapsedOverpass(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const opGroup = new THREE.Group();
+    opGroup.position.set(cx, gy, cz);
+
+    // Thick concrete bridge pillars
+    const pillar1 = new THREE.Mesh(new THREE.BoxGeometry(2.2, 9.0, 2.2), concreteMat);
+    pillar1.position.set(-10, 4.5, 0);
+    pillar1.castShadow = true;
+    opGroup.add(pillar1);
+    colliders.push({ minX: cx - 11.2, maxX: cx - 8.8, minZ: cz - 1.2, maxZ: cz + 1.2 });
+
+    const pillar2 = new THREE.Mesh(new THREE.BoxGeometry(2.2, 5.0, 2.2), concreteMat);
+    pillar2.position.set(10, 2.5, 0);
+    pillar2.castShadow = true;
+    opGroup.add(pillar2);
+    colliders.push({ minX: cx + 8.8, maxX: cx + 11.2, minZ: cz - 1.2, maxZ: cz + 1.2 });
+
+    // Fractured Road Deck (10m wide, 24m long, sloped from 9m high down to 0.4m at road level)
+    const deckLen = 22;
+    const slopeAngle = Math.atan2(8.0, deckLen);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(8.5, 0.7, deckLen), roadMat);
+    deck.position.set(0, 4.5, 0);
+    deck.rotation.z = slopeAngle;
+    deck.castShadow = true;
+    opGroup.add(deck);
+
+    // Concrete barrier railings along edge
+    const railL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.0, deckLen), concreteMat);
+    railL.position.set(-4.1, 5.0, 0);
+    railL.rotation.z = slopeAngle;
+    opGroup.add(railL);
+
+    sceneGroup.add(opGroup);
+  }
+
+  createCollapsedOverpass(-80, -48);
+
+  // D. Ruined City Plaza with broken centerpiece monument
+  function createCityPlaza(cx: number, cz: number) {
+    const gy = getTerrainHeight(cx, cz);
+    const pGroup = new THREE.Group();
+    pGroup.position.set(cx, gy, cz);
+
+    // Cracked plaza tile floor
+    const plazaTile = new THREE.Mesh(new THREE.BoxGeometry(24, 0.15, 24), concreteMat);
+    plazaTile.position.y = 0.075;
+    pGroup.add(plazaTile);
+
+    // Broken centerpiece obelisk monument
+    const base = new THREE.Mesh(new THREE.BoxGeometry(3.5, 1.2, 3.5), rockMat);
+    base.position.y = 0.6;
+    pGroup.add(base);
+
+    const brokenShaft = new THREE.Mesh(new THREE.BoxGeometry(1.6, 4.5, 1.6), rockMat);
+    brokenShaft.position.set(0, 3.2, 0);
+    brokenShaft.rotation.z = 0.18;
+    pGroup.add(brokenShaft);
+    colliders.push({ minX: cx - 2.0, maxX: cx + 2.0, minZ: cz - 2.0, maxZ: cz + 2.0 });
+
+    sceneGroup.add(pGroup);
+  }
+
+  createCityPlaza(-60, -75);
 
   // 4. Abandoned Vehicles Across Roads & Highways
   function createGroundedVehicle(
@@ -1398,11 +1672,84 @@ export function buildPostApocalypticTown(): WorldBuildResult {
   const startY = getWorldSurfaceHeight(startX, startZ) + 1.7;
   const player = new THREE.Vector3(startX, startY, startZ);
 
+  // Safehouse Stash Footlocker in Forest Ranger Cabin
+  const stashX = -101.5;
+  const stashZ = 27.0;
+  const stashY = getWorldSurfaceHeight(stashX, stashZ);
+  const stashGroup = new THREE.Group();
+  stashGroup.position.set(stashX, stashY, stashZ);
+
+  const stashMat = new THREE.MeshStandardMaterial({
+    color: 0x1e3a2f,
+    roughness: 0.6,
+    metalness: 0.5,
+  });
+  const stashChest = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.65, 0.8), stashMat);
+  stashChest.position.y = 0.325;
+  stashChest.castShadow = true;
+  stashGroup.add(stashChest);
+
+  const latchMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.3, metalness: 0.9 });
+  const latch = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.22, 0.08), latchMat);
+  latch.position.set(0, 0.38, 0.42);
+  stashGroup.add(latch);
+
+  const stashGlow = new THREE.PointLight(0x10b981, 0.8, 4, 2);
+  stashGlow.position.set(0, 0.7, 0);
+  stashGroup.add(stashGlow);
+  sceneGroup.add(stashGroup);
+
+  const stashLocation = new THREE.Vector3(stashX, stashY + 0.35, stashZ);
+
+  // Shelters & Safe Beds
+  const shelters: ShelterBed[] = [
+    {
+      id: 'ranger_cabin_bed',
+      name: 'Ranger Cabin Bunk',
+      district: 'Whispering Pines',
+      position: [-108.8, getWorldSurfaceHeight(-108.8, 22.0) + 0.8, 22.0],
+    },
+    {
+      id: 'suburb_bed_a',
+      name: 'Master Bed (West House)',
+      district: 'South Suburbia',
+      position: [-27.5, getWorldSurfaceHeight(-27.5, 75.0) + 0.5, 75.0],
+    },
+    {
+      id: 'suburb_bed_b',
+      name: 'Guest Bed (East House)',
+      district: 'South Suburbia',
+      position: [27.5, getWorldSurfaceHeight(27.5, 75.0) + 0.5, 75.0],
+    },
+    {
+      id: 'clinic_gurney',
+      name: 'Field Hospital Gurney',
+      district: 'Quarantine Camp',
+      position: [-10.5, getWorldSurfaceHeight(-10.5, -88.0) + 0.8, -88.0],
+    },
+  ];
+
+  // Drivable 4x4 Vehicle Spawn Location (Highway forecourt near Gas Station)
+  const vehX = 68;
+  const vehZ = 4;
+  const vehY = getWorldSurfaceHeight(vehX, vehZ) + 0.4;
+  const vehicleSpawn = {
+    pos: new THREE.Vector3(vehX, vehY, vehZ),
+    rotationY: Math.PI / 2,
+  };
+
+  // Fuel Station Location (Pumps at Highway Gas Station)
+  const fuelLocation = new THREE.Vector3(85, getWorldSurfaceHeight(85, 4) + 0.5, 4);
+
   return {
     sceneGroup,
     colliders,
     streetlights,
     windObjects,
+    shelters,
+    stashLocation,
+    vehicleSpawn,
+    fuelLocation,
     spawnPoints: {
       player,
       supplies,

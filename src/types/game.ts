@@ -2,6 +2,41 @@ export type GameStatus = 'title' | 'playing' | 'paused' | 'gameover';
 
 export type WeaponType = 'rifle' | 'pipe';
 
+export interface VehicleState {
+  id: string;
+  name: string;
+  position: [number, number, number];
+  rotationY: number;
+  speed: number;          // in m/s (negative for reverse)
+  maxSpeed: number;       // ~18 m/s (~65 km/h)
+  health: number;         // 0 - 100
+  maxHealth: number;      // 100
+  fuel: number;           // 0 - 100
+  maxFuel: number;        // 100
+  isOccupied: boolean;
+  headlightsOn: boolean;
+}
+
+export interface ShelterBed {
+  id: string;
+  name: string;
+  district: string;
+  position: [number, number, number];
+}
+
+export interface SafehouseStash {
+  food: number;
+  water: number;
+  medkit: number;
+  ammo: number;
+}
+
+export interface MapWaypoint {
+  x: number;
+  z: number;
+  name?: string;
+}
+
 export interface PlayerStats {
   health: number;       // 0 - 100
   maxHealth: number;
@@ -27,6 +62,17 @@ export interface PlayerStats {
   dayNumber: number;    // e.g. 1
   isNight: boolean;
   currentLocation?: string;
+
+  // Connected World, Driving, Shelters & Map
+  isDriving?: boolean;
+  vehicleState?: VehicleState;
+  waypoint?: MapWaypoint | null;
+  isSleeping?: boolean;
+  stashItems?: SafehouseStash;
+  foodCount?: number;
+  waterCount?: number;
+  medkitCount?: number;
+  warningMessage?: string | null;
 }
 
 export type ItemType = 'food' | 'water' | 'medkit' | 'ammo' | 'scrap';

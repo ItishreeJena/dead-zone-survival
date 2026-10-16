@@ -50,8 +50,9 @@ export class PlayerController {
   private footstepTimer: number = 0;
 
   // Input states
-  private keys: Record<string, boolean> = {};
+  public keys: Record<string, boolean> = {};
   public isLocked: boolean = false;
+  public isDriving: boolean = false;
 
   // Callbacks
   public onFireBullet?: (origin: THREE.Vector3, direction: THREE.Vector3) => void;
@@ -59,6 +60,7 @@ export class PlayerController {
   public onMeleeSwing?: (lookDir: THREE.Vector3) => void;
   public onTogglePause?: () => void;
   public onInteract?: () => void;
+  public onToggleMap?: () => void;
 
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement) {
     this.camera = camera;
@@ -298,6 +300,8 @@ export class PlayerController {
       this.setWeapon('rifle');
     } else if (e.code === 'KeyE') {
       if (this.onInteract) this.onInteract();
+    } else if (e.code === 'KeyM') {
+      if (this.onToggleMap) this.onToggleMap();
     } else if (e.code === 'Escape') {
       if (this.onTogglePause) this.onTogglePause();
     }
@@ -308,7 +312,7 @@ export class PlayerController {
   };
 
   private handleMouseMove = (e: MouseEvent) => {
-    if (!this.isLocked) return;
+    if (!this.isLocked || this.isDriving) return;
 
     const sens = 0.0022;
     const dx = e.movementX * sens;
@@ -327,7 +331,7 @@ export class PlayerController {
   };
 
   public handleMouseDown = (e: MouseEvent) => {
-    if (!this.isLocked) return;
+    if (!this.isLocked || this.isDriving) return;
 
     if (e.button === 0) {
       // Left click: Fire primary weapon (or swing pipe)
@@ -499,6 +503,13 @@ export class PlayerController {
         this.muzzleFlashGroup.visible = false;
         this.muzzleLight.intensity = 0;
       }
+    }
+
+    if (this.isDriving) {
+      this.viewmodelsGroup.visible = false;
+      this.flashlight.visible = false;
+      this.stats.isSprinting = false;
+      return;
     }
 
     // 4. Movement Inputs
@@ -722,7 +733,28 @@ export class PlayerController {
     this.recoilZ = 0;
     this.recoilPitch = 0;
     this.keys = {};
+    this.isDriving = false;
     this.updateWeaponVisibility();
+  }
+
+  public setDriving(driving: boolean) {
+    this.isDriving = driving;
+    if (driving) {
+      this.viewmodelsGroup.visible = false;
+      this.flashlight.visible = false;
+      this.stats.isSprinting = false;
+    } else {
+      this.updateWeaponVisibility();
+      this.flashlight.visible = this.stats.flashlightOn;
+    }
+  }
+
+  public getYaw(): number {
+    return this.yaw;
+  }
+
+  public setPosition(pos: THREE.Vector3) {
+    this.position.copy(pos);
   }
 
   public dispose() {
