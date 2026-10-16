@@ -1,0 +1,6 @@
+{
+  "name": "DEAD ZONE: SURVIVAL",
+  "description": "An atmospheric 3D first-person post-apocalyptic zombie survival game built with Three.js. Scavenge supplies, avoid the infected, and survive.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
